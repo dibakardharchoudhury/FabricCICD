@@ -25,6 +25,11 @@
 #   dance in the pipeline is needed — but you must RUN this notebook as an identity that
 #   can write to Gold_SM (own it / take ownership once if a different identity deployed).
 #
+# No default lakehouse required: this notebook only makes CONTROL-PLANE calls (Variable
+#   Library + item-definition REST + Direct Lake connection). It never reads/writes Spark
+#   tables, so it can run with NO lakehouse attached. Every sempy_labs call passes
+#   workspace=WORKSPACE_ID explicitly, so nothing is inferred from an attached lakehouse.
+#
 # Prereqs: the running identity is a workspace Member/Admin and owns Gold_SM. The Variable
 #   Library is created here on first run; the deployment pipeline activates the matching
 #   value set per stage so consumers resolve the right IDs automatically.
