@@ -13,8 +13,11 @@
 #   whole CI/CD binding layer — library + all three bindings — is provisioned from here.
 #
 # What it does (all binding values come from VL_CICD_Bindings, never hardcoded):
-#   0. Variable Library VL_CICD_Bindings -> created if missing (4 Guid vars, Dev/Prod sets)
-#   1. Notebooks NB_01/02/03   -> default lakehouse = Bronze/Silver/Gold (this stage)
+#   0. Variable Library VL_CICD_Bindings -> created if missing (4 String vars, Dev/Prod sets)
+#   0b. Active value set -> switched to match THIS workspace (dev->Development, prod->Production)
+#        so getLibrary() returns Dev IDs in Dev and Prod IDs in Prod automatically.
+#   1. Notebooks NB_01/02/03 -> ALL three lakehouses attached; DEFAULT = Bronze/Silver/Gold
+#        for NB_01/NB_02/NB_03 respectively (this stage).
 #   2. Dataflow  DF_Gold_PA    -> parameters  SilverWorkspaceId / SilverLakehouseId
 #   3. Semantic model Gold_SM  -> Direct Lake ON ONELAKE connection -> Gold_LH (this stage)
 #
@@ -57,13 +60,21 @@ gold_lakehouse_name   = "Gold_LH"
 #   then pre-installed on the Spark pool — faster, reproducible, and version-pinned.
 #   See: https://learn.microsoft.com/fabric/data-engineering/environment-manage-library
 %pip install -q semantic-link-labs
-import json, base64, re, requests
+import json, base64, re, requests, io, contextlib
 import sempy_labs as labs
 from sempy_labs import directlake
 from sempy_labs import variable_library as vlib
 import notebookutils
 
 VL_NAME = "VL_CICD_Bindings"
+
+# Helper to keep output clean: the sempy_labs wrappers print their own verbose 🟢 status
+# lines. Wrap those calls in `with _quiet():` to suppress that chatter so this notebook can
+# print one tidy summary instead. Exceptions still propagate (only stdout is muted).
+@contextlib.contextmanager
+def _quiet():
+    with contextlib.redirect_stdout(io.StringIO()):
+        yield
 
 # Cell 3 — Fabric REST helpers (resolve NAMES -> GUIDs). Control-plane only; no lakehouse.
 _FABRIC_BASE = "https://api.fabric.microsoft.com/v1"
@@ -114,6 +125,15 @@ def resolve_item_id(workspace_id, display_name, item_type):
         )
     return match
 
+def current_workspace():
+    """Return (id, name) of the workspace THIS notebook is running in."""
+    ctx = notebookutils.runtime.context
+    ws_id = ctx.get("currentWorkspaceId")
+    ws_name = ctx.get("currentWorkspaceName")
+    if not ws_name and ws_id:
+        ws_name = fabric_rest("GET", f"/workspaces/{ws_id}")["displayName"]
+    return ws_id, ws_name
+
 # Cell 4 — Create the Variable Library IF it does not already exist (idempotent bootstrap)
 # Resolves each stage's GUIDs from the NAMES above. Development is the default value set;
 # Production overrides each value. The deployment pipeline activates 'Production' in Prod
@@ -149,20 +169,46 @@ if not _already_exists:
         {"name": "Development", "variableOverrides": [{"name": k, "value": dev[k]}  for k in notes]},
         {"name": "Production",  "variableOverrides": [{"name": k, "value": prod[k]} for k in notes]},
     ]
-    vlib.create_variable_library(
-        name=VL_NAME,
-        variables=variables,
-        value_sets=value_sets,
-        value_sets_order=["Development", "Production"],
-        description="CI/CD stage bindings consumed by notebooks, DF_Gold_PA, and (via this notebook) Gold_SM.",
-    )
-    print(f"✅ Created Variable Library '{VL_NAME}' from names (Dev default, Prod override).")
+    with _quiet():
+        vlib.create_variable_library(
+            name=VL_NAME,
+            variables=variables,
+            value_sets=value_sets,
+            value_sets_order=["Development", "Production"],
+            description="CI/CD stage bindings consumed by notebooks, DF_Gold_PA, and (via this notebook) Gold_SM.",
+        )
+    print(f"→ Variable Library '{VL_NAME}' created (Development default, Production override).")
 else:
-    print(f"ℹ Variable Library '{VL_NAME}' already exists — leaving it as the source of truth.")
+    print(f"→ Variable Library '{VL_NAME}' already exists — reused as the source of truth.")
 
-# Cell 5 — Read the ACTIVE Variable Library value set (single source of truth)
-# Notebooks are a Variable Library consumer via NotebookUtils. getLibrary resolves the
-# value set that is ACTIVE in this workspace/stage (Dev IDs in Dev, Prod IDs in Prod).
+# Cell 5 — Activate the value set that matches THIS workspace (dev->Development, prod->Production)
+# THIS is what makes "dev values in Dev, prod values in Prod" happen. getLibrary() (Cell 6)
+# returns whichever value set is ACTIVE, so before reading we flip the active set to match the
+# workspace this notebook is running in. Running NB_04 as the first pipeline activity per stage
+# therefore self-selects the correct IDs — no manual step and no deployment rule required.
+# (You may still add a Variable Library deployment rule in the pipeline; this just automates it.)
+CURRENT_WS_ID, CURRENT_WS_NAME = current_workspace()
+if CURRENT_WS_NAME == prod_workspace_name:
+    ACTIVE_SET = "Production"
+elif CURRENT_WS_NAME == dev_workspace_name:
+    ACTIVE_SET = "Development"
+else:
+    ACTIVE_SET = None  # unknown stage — leave whatever is active and validate after reading
+
+if ACTIVE_SET:
+    vl_id = resolve_item_id(CURRENT_WS_ID, VL_NAME, "VariableLibrary")
+    fabric_rest(
+        "PATCH", f"/workspaces/{CURRENT_WS_ID}/variableLibraries/{vl_id}",
+        {"properties": {"activeValueSetName": ACTIVE_SET}},
+    )
+    print(f"→ Active value set for '{VL_NAME}' set to '{ACTIVE_SET}' (workspace '{CURRENT_WS_NAME}').")
+else:
+    print(f"⚠ Workspace '{CURRENT_WS_NAME}' is neither the Dev nor Prod name in Cell 1 — "
+          f"leaving the active value set unchanged.")
+
+# Cell 6 — Read the now-active Variable Library value set (single source of truth)
+# Notebooks are a Variable Library consumer via NotebookUtils. getLibrary resolves the value
+# set we just activated, so these are the CURRENT stage's IDs (Dev in Dev, Prod in Prod).
 try:
     vl = notebookutils.variableLibrary.getLibrary(VL_NAME)
     WORKSPACE_ID        = vl.WorkspaceId
@@ -173,7 +219,7 @@ except Exception as e:
     raise RuntimeError(
         f"Could not read Variable Library '{VL_NAME}' or one of its variables "
         f"(WorkspaceId/BronzeLakehouseId/SilverLakehouseId/GoldLakehouseId).\n"
-        f"  - Confirm the library exists in THIS workspace and the active value set is set.\n"
+        f"  - Confirm the library exists in THIS workspace and a value set is active.\n"
         f"  - Confirm all four variable names match exactly.\n"
         f"  Underlying error: {e}"
     ) from e
@@ -184,31 +230,52 @@ if any(v in (None, "") for v in (WORKSPACE_ID, BRONZE_LAKEHOUSE_ID, SILVER_LAKEH
         "Check the active value set has all four GUIDs populated for this stage."
     )
 
-print("Resolved stage bindings from Variable Library:")
-print(f"  WorkspaceId        = {WORKSPACE_ID}")
-print(f"  BronzeLakehouseId  = {BRONZE_LAKEHOUSE_ID}")
-print(f"  SilverLakehouseId  = {SILVER_LAKEHOUSE_ID}")
-print(f"  GoldLakehouseId    = {GOLD_LAKEHOUSE_ID}")
+# Safety net: the WorkspaceId binding must equal the workspace we are running in. If not, the
+# wrong value set is active (e.g. Dev IDs while running in Prod) — fail loudly rather than
+# silently binding everything to the other stage.
+if CURRENT_WS_ID and WORKSPACE_ID != CURRENT_WS_ID:
+    raise ValueError(
+        f"Active value set mismatch: the library's WorkspaceId ({WORKSPACE_ID}) is not this "
+        f"workspace ({CURRENT_WS_ID}). The wrong value set is active for stage '{CURRENT_WS_NAME}'.\n"
+        f"  - Expected value set '{ACTIVE_SET or '(stage unknown)'}' to be active.\n"
+        f"  - Re-run after confirming the Dev/Prod workspace names in Cell 1 are correct."
+    )
 
-# Cell 6 — (1) Bind each notebook's DEFAULT LAKEHOUSE to this stage's lakehouse
-# The default lakehouse lives in the notebook metadata ("dependencies.lakehouse").
-# We read each notebook's git-friendly definition, rewrite the three default-lakehouse
-# fields to the VL values, and push it back via Update Notebook Definition.
-notebook_to_lakehouse = {
+# Cell 7 — (1) Attach ALL THREE lakehouses to every notebook; set the stage-appropriate DEFAULT
+# The lakehouse binding lives in the notebook metadata ("dependencies.lakehouse"):
+#   - default_lakehouse / _name / _workspace_id  -> the ONE default (Bronze for NB_01,
+#     Silver for NB_02, Gold for NB_03 — so each writes to its own layer by default), and
+#   - known_lakehouses                           -> the FULL list of attached lakehouses
+#     (all three), so every notebook can also reach the other two layers by three-part name.
+# We rewrite both, in this stage's GUIDs, and push the definition back via REST.
+ALL_LAKEHOUSE_IDS = [BRONZE_LAKEHOUSE_ID, SILVER_LAKEHOUSE_ID, GOLD_LAKEHOUSE_ID]
+KNOWN_LH_JSON = "[" + ", ".join(f'{{"id": "{lh}"}}' for lh in ALL_LAKEHOUSE_IDS) + "]"
+
+notebook_to_default = {
     "NB_01_Seed_Bronze":      ("Bronze_LH", BRONZE_LAKEHOUSE_ID),
     "NB_02_Transform_Silver": ("Silver_LH", SILVER_LAKEHOUSE_ID),
     "NB_03_Aggregate_Gold":   ("Gold_LH",   GOLD_LAKEHOUSE_ID),
 }
 
-for nb_name, (lh_name, lh_id) in notebook_to_lakehouse.items():
+for nb_name, (lh_name, lh_id) in notebook_to_default.items():
     src = labs.notebook.get_notebook_definition(nb_name, workspace=WORKSPACE_ID, decode=True)
+    # Point the single DEFAULT lakehouse at this notebook's own layer (this stage).
     src = re.sub(r'("default_lakehouse"\s*:\s*")[^"]*(")',              rf'\g<1>{lh_id}\g<2>', src)
     src = re.sub(r'("default_lakehouse_name"\s*:\s*")[^"]*(")',         rf'\g<1>{lh_name}\g<2>', src)
     src = re.sub(r'("default_lakehouse_workspace_id"\s*:\s*")[^"]*(")', rf'\g<1>{WORKSPACE_ID}\g<2>', src)
-    labs.notebook.update_notebook_definition(name=nb_name, notebook_content=src, workspace=WORKSPACE_ID)
-    print(f"✅ {nb_name}: default lakehouse -> {lh_name} ({lh_id})")
+    # Attach ALL THREE lakehouses. Replace an existing known_lakehouses array if present,
+    # otherwise inject one right after the default_lakehouse_workspace_id field.
+    if re.search(r'"known_lakehouses"\s*:\s*\[', src):
+        src = re.sub(r'"known_lakehouses"\s*:\s*\[.*?\]',
+                     f'"known_lakehouses": {KNOWN_LH_JSON}', src, flags=re.DOTALL)
+    else:
+        src = re.sub(r'("default_lakehouse_workspace_id"\s*:\s*"[^"]*")',
+                     rf'\g<1>, "known_lakehouses": {KNOWN_LH_JSON}', src)
+    with _quiet():
+        labs.notebook.update_notebook_definition(name=nb_name, notebook_content=src, workspace=WORKSPACE_ID)
+    print(f"→ {nb_name}: default {lh_name}, attached Bronze_LH + Silver_LH + Gold_LH.")
 
-# Cell 7 — (2) Bind Dataflow Gen2 DF_Gold_PA parameters to this stage's Silver lakehouse
+# Cell 8 — (2) Bind Dataflow Gen2 DF_Gold_PA parameters to this stage's Silver lakehouse
 # DF Gen2 can't be rebound by a data-source rule; its parameters carry the IDs. We patch
 # the parameter DEFAULT literals inside the dataflow's mashup definition via REST.
 # Both Silver IDs live in this stage's single workspace, so SilverWorkspaceId = WorkspaceId.
@@ -243,31 +310,43 @@ if changed:
         "POST", f"/workspaces/{WORKSPACE_ID}/items/{df_id}/updateDefinition",
         {"definition": definition},
     )
-    print(f"✅ {DATAFLOW_NAME}: parameters set -> {param_values}")
+    DF_BOUND = True
+    print(f"→ {DATAFLOW_NAME}: SilverWorkspaceId/SilverLakehouseId set to this stage's Silver_LH.")
 else:
+    DF_BOUND = False
     print(f"⚠ {DATAFLOW_NAME}: no matching parameter literals found — verify parameter names "
           f"({', '.join(param_values)}) exist in the dataflow.")
 
-# Cell 8 — (3) Rebind Gold_SM (Direct Lake ON ONELAKE) to this stage's Gold_LH
+# Cell 9 — (3) Rebind Gold_SM (Direct Lake ON ONELAKE) to this stage's Gold_LH
 # A data-source deployment rule is NOT supported for Direct Lake on OneLake; instead we
 # regenerate the model's connection in code (the "connection-string parameter" the docs
 # mention). use_sql_endpoint=False == Direct Lake OVER ONELAKE (not the SQL endpoint).
-directlake.update_direct_lake_model_connection(
-    dataset="Gold_SM",
-    workspace=WORKSPACE_ID,
-    source=GOLD_LAKEHOUSE_ID,
-    source_type="Lakehouse",
-    source_workspace=WORKSPACE_ID,
-    use_sql_endpoint=False,
-)
-print("✅ Gold_SM: Direct Lake on OneLake connection -> Gold_LH (this stage)")
+with _quiet():
+    directlake.update_direct_lake_model_connection(
+        dataset="Gold_SM",
+        workspace=WORKSPACE_ID,
+        source=GOLD_LAKEHOUSE_ID,
+        source_type="Lakehouse",
+        source_workspace=WORKSPACE_ID,
+        use_sql_endpoint=False,
+    )
+print("→ Gold_SM: Direct Lake on OneLake connection set to this stage's Gold_LH.")
 
-# Sanity check — confirm where the model now points (should be this stage's Gold_LH)
-print(directlake.get_direct_lake_sources("Gold_SM", workspace=WORKSPACE_ID))
-
-# Cell 9 — Summary
-print("\nStage binding complete — all three bindings now point at this stage's items:")
-print(f"  Notebooks NB_01/02/03 -> Bronze/Silver/Gold_LH in workspace {WORKSPACE_ID}")
-print(f"  DF_Gold_PA            -> SilverWorkspaceId/SilverLakehouseId = {WORKSPACE_ID} / {SILVER_LAKEHOUSE_ID}")
-print(f"  Gold_SM (Direct Lake) -> Gold_LH {GOLD_LAKEHOUSE_ID}")
-print("Next pipeline activities (NB_Setup -> NB_01 -> NB_02 -> DF_Gold_PA -> NB_03) now load THIS stage.")
+# Cell 10 — Summary (concise, stage-aware)
+_line = "─" * 64
+print()
+print("═" * 64)
+print("  NB_04 — stage binding complete")
+print("═" * 64)
+print(f"  Stage workspace : {CURRENT_WS_NAME}  ({WORKSPACE_ID})")
+print(f"  Active value set: {ACTIVE_SET or '(unchanged)'}")
+print(_line)
+print(f"  {'Notebook':<24}{'Default LH':<12}Attached")
+print(f"  {'NB_01_Seed_Bronze':<24}{'Bronze_LH':<12}Bronze + Silver + Gold")
+print(f"  {'NB_02_Transform_Silver':<24}{'Silver_LH':<12}Bronze + Silver + Gold")
+print(f"  {'NB_03_Aggregate_Gold':<24}{'Gold_LH':<12}Bronze + Silver + Gold")
+print(_line)
+print(f"  DF_Gold_PA   -> Silver_LH params {'set' if DF_BOUND else 'UNCHANGED (check names)'}")
+print("  Gold_SM      -> Gold_LH (Direct Lake on OneLake)")
+print("═" * 64)
+print("  Next: NB_Setup -> NB_01 -> NB_02 -> DF_Gold_PA -> NB_03 now load THIS stage.")
