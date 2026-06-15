@@ -161,7 +161,13 @@ Deploy **all items in one pass** so the pipeline pairs them by name and rewrites
 3. **Semantic model** — `Gold_SM` lineage points at **Prod** `Gold_LH`; refresh; `Total BOE` / `Total Cost (USD)` return values.
 4. **Report** — open `Gold_Dashboard` in Prod; it's bound to the Prod `Gold_SM` and renders Prod data.
 
-> **Why is the Prod lakehouse empty — wasn't the table schema in Git?** No. Fabric Git serializes only the lakehouse **container** (`.platform` metadata + `shortcuts.metadata.json`); **Delta tables and their schemas are never committed** — tables are data in OneLake (schema lives in each table's `_delta_log`), and Git tracks source, not data. The deployment pipeline copies the empty lakehouse object the same way. So the **tables don't exist in Prod until the notebooks create them** — `NB_01`→Bronze, `NB_02`→Silver, `NB_03`/`DF_Gold_PA`→Gold. Running `PL_Refresh_Master` (13.2) creates the schema **and** populates it in a single run.
+> **Why is the Prod lakehouse empty — wasn't the table schema in Git?** No. Per the [official docs](https://learn.microsoft.com/en-us/fabric/data-engineering/lakehouse-git-deployment-pipelines#what-is-tracked), Git tracks only the lakehouse **metadata/container** (name, GUID, SQL-endpoint metadata, `shortcuts.metadata.json`). **Tables (Delta and non-Delta) are explicitly "not tracked / not supported"** — schema *and* data live in OneLake, not Git. The deployment pipeline's documented default is *"a new **empty** lakehouse with the same name is created in the target workspace."* So tables don't exist in Prod until something recreates them.
+>
+> **The pipeline promotes code & artifacts — never data.** Each environment establishes its own tables. Pick the pattern that fits (this demo uses #1):
+> 1. **DDL-in-code (this repo).** Notebooks/pipelines carry the `CREATE TABLE` logic and *do* promote. Run `PL_Refresh_Master` in Prod (13.2) → schema **and** data in one pass. Best when Prod ingests from its own source.
+> 2. **Shortcuts, not copies.** Point Prod tables at a shared source via a OneLake internal shortcut (auto-remapped across stages) or an external ADLS/S3 shortcut — no data copy, and the shortcut *definition* is tracked in Git.
+> 3. **Explicit data copy.** A Copy-activity pipeline or notebook clones Dev→Prod tables (`DEEP CLONE`, or `notebookutils.fs.cp` on the Delta folders via OneLake paths) when Prod must mirror Dev exactly.
+> 4. **Prod re-ingests from the production source.** The enterprise norm: Dev loads sample data, Prod loads real data from the upstream system. Empty-on-deploy is by design.
 
 ### Part C2 — Automate the promotion
 
@@ -178,8 +184,8 @@ Deploy **all items in one pass** so the pipeline pairs them by name and rewrites
 | Area | Limitation | Mitigation |
 | --- | --- | --- |
 | Git | Sensitivity labels block commits; 50 MB/commit; Admin-only connect; no MyWorkspace | Remove labels; batch commits; pre-configure; use named workspaces |
-| Git | Lakehouse Git/deploy carries only the **container** — **table schemas & data are never serialized** | Notebooks recreate tables on run; run `PL_Refresh_Master` in Prod (Step 13) |
-| Deploy | Lakehouse arrives **empty** — no tables, no data | Run `PL_Refresh_Master` after each deploy (creates schema + loads data) |
+| Git | Lakehouse Git/deploy tracks only **metadata** — Tables (Delta & non-Delta) are *"not tracked / not supported"* (per docs) | Recreate schema via notebooks/pipeline, shortcut a shared source, copy tables explicitly, or re-ingest from the prod source (Step 13 callout) |
+| Deploy | Lakehouse arrives **empty** — docs: *"a new empty lakehouse… is created in the target workspace"* | Run `PL_Refresh_Master` after deploy (creates schema + loads data) |
 | Deploy | Items added after assignment don't auto-pair; same-name unpaired items duplicate | Build all items first; verify pairing before deploying |
 | Deploy | DirectLake semantic models don't auto-bind | Data-source rule → Prod `Gold_LH` (Step 12) |
 | Deploy | Dataflow Gen2 doesn't auto-bind | Parameter rule → Prod `Silver_LH` (Step 12) |
