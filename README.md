@@ -66,9 +66,9 @@ makes every step below clear:
 
 | # | Name | Lives in | What it does | When you run it |
 |---|------|----------|--------------|-----------------|
-| 1 | **Data pipelines** | `pipelines/*.json` | Fabric Data Factory pipelines that move/transform *data* inside a workspace | During the data build / refresh (Steps 5 & 10) |
-| 2 | **Fabric Deployment Pipeline** | Fabric portal → Deployment pipelines | Promotes *items* (lakehouses, notebooks, pipelines, semantic model) across **Dev → Prod** workspaces | During CI/CD setup (Step 8) and each promotion |
-| 3 | **GitHub Actions “pipelines”** | `github_actions/*.yml` | CI/CD automation that triggers the Fabric Deployment Pipeline on push/merge | Automatically on git push (Steps 9 & 11) |
+| 1 | **Data pipelines** | `pipelines/*.json` | Fabric Data Factory pipelines that move/transform *data* inside a workspace | During the data build / refresh (Steps 6 & 16) |
+| 2 | **Fabric Deployment Pipeline** | Fabric portal → Deployment pipelines | Promotes *items* (lakehouses, notebooks, pipelines, semantic model) across **Dev → Prod** workspaces | During CI/CD setup (Steps 12–13) and each promotion |
+| 3 | **GitHub Actions “pipelines”** | `github_actions/*.yml` | CI/CD automation that triggers the Fabric Deployment Pipeline on push/merge | Automatically on git push (Steps 15 & 17) |
 
 ### The two data pipelines (#1 above)
 - **`PL_Refresh_Master`** — *orchestration.* Runs the whole Medallion build in order:
@@ -89,9 +89,14 @@ makes every step below clear:
 
 ## Quick Start
 
-> The fastest path to a working demo is to run the **data pipeline first** (Steps 1–5)
-> to prove the Medallion build, then layer on **Git + Deployment Pipelines** (Steps 6–11)
-> to demonstrate CI/CD. You can stop after Step 5 for a pure data demo.
+The demo is organized in three parts — do them in order, or stop after any part:
+
+- **Part A — Build the data** (Steps 1–5): create the lakehouses and run the notebooks
+  to populate the Bronze → Silver → Gold Medallion. Stop here for a pure data demo.
+- **Part B — Add the analytics items** (Steps 6–9): import the data pipelines, build the
+  dataflows, create the semantic model, and build the Power BI report.
+- **Part C — Wire up CI/CD** (Steps 10–17): connect Git, create the Fabric Deployment
+  Pipeline, configure GitHub Actions, and demo the promotion loop.
 
 ### Step 1 — Prerequisites
 - Fabric capacity (F2+) provisioned and assigned to your workspace
@@ -100,6 +105,9 @@ makes every step below clear:
   promotion target
 - For the CI/CD half: a GitHub repo with `develop` and `main` branches, and the
   Fabric admin switches **Git integration** and **GitHub integration** enabled
+- For GitHub Actions automation: an **Entra service principal** with the Fabric admin
+  switch *“Service principals can use Fabric APIs”* enabled, added as Admin on both
+  workspaces and the deployment pipeline (full setup in Step 14)
 
 ### Step 2 — Create the three lakehouses
 In your dev workspace (`ws-CICD-Dev`), create three lakehouses with these **exact** names:
@@ -143,38 +151,160 @@ workspace before running.
 4. `NB_03_Aggregate_Gold`     — Silver → Gold (aggregates + KPI fact table)
 
 After Step 5 you have a fully built Medallion lakehouse. Stop here for a data-only
-demo, or continue to wire up CI/CD.
+demo, or continue to Part B to add the pipelines, semantic model, and report.
 
-> **Pipeline alternative (optional):** instead of running the four notebooks by hand,
-> you can import `pipelines/PL_Refresh_Master.json` and run it once — it executes
-> `NB_01 → NB_02 → NB_03` and refreshes the semantic model in a single click. To
-> demonstrate file-based ingestion instead of the seed notebook, run
-> `pipelines/PL_Copy_Bronze_Ingest.json` first, then `NB_02` and `NB_03`.
+## Part B — Add the analytics items
 
-### Step 6 — Connect Git Integration
+### Step 6 — Import & run the data pipelines
+The two Data Factory pipelines in `pipelines/` give you orchestration and file-based
+ingestion (pipeline type #1). Bring them into the workspace one of two ways:
+
+- **Via Git (recommended):** they arrive automatically when you sync the repo in Step 10.
+- **Manually now:** in the workspace choose **New → Data pipeline**, then use
+  **… → Import** (or recreate the activities) from the JSON definitions.
+
+Then:
+1. Open **`PL_Copy_Bronze_Ingest`** — point its source at the CSVs in **OneLake Files**
+   (uploaded by `NB_00`) and confirm the sink is `Bronze_LH`. Run it to demonstrate
+   file-based ingestion (the “real-world” alternative to the `NB_01` seed notebook).
+2. Open **`PL_Refresh_Master`** — it chains `NB_01 → NB_02 → NB_03` and then refreshes
+   the semantic model. Leave `Environment = dev`; the `WorkspaceId` / `SemanticModelId`
+   parameters are set per stage by Deployment Rules. Run it once for a one-click
+   end-to-end refresh.
+
+> The `SemanticModelId` parameter stays empty until you create the semantic model in
+> Step 8 — fill it in (or set it via Deployment Rules) afterwards so the refresh
+> activity can find the model.
+
+### Step 7 — (Optional) Build the Dataflows Gen2
+The `dataflows/*.m` files are Power Query M scripts that show the dataflow-based path
+for each Medallion layer (`DF_Bronze_*`, `DF_Silver_*`, `DF_Gold_*`). They are an
+alternative to the notebooks — skip them if you built the data with notebooks in Step 5.
+
+To use them: **New → Dataflow Gen2 → Edit in advanced editor**, paste the M from the
+matching `.m` file, then update the connection. The scripts ship with a placeholder
+SharePoint URL (`https://yourorg.sharepoint.com/…`); switch it to your SharePoint site
+or the commented `Lakehouse.Contents("Bronze_LH")` OneLake path for a no-SharePoint demo.
+Set each dataflow's **data destination** to the target lakehouse and table.
+
+### Step 8 — Create the semantic model (`Gold_SM`)
+`semantic_model/Gold_SM.bim` is a TMSL model (4 tables, 15+ measures) over the Gold
+layer using **DirectLake**. Create it one of two ways:
+
+- **From Fabric (fastest):** open `Gold_LH` → **New semantic model**, select the Gold
+  tables (`production_daily`, plus the cost / schedule / KPI tables), name it `Gold_SM`.
+  Then add the measures from the `.bim` (e.g. `Total BOE`, `Total Oil (Bbl)`,
+  `Avg Water Cut %`) in the model view.
+- **From the `.bim` (full fidelity):** open `Gold_SM.bim` in **Tabular Editor** or
+  modern **Power BI Desktop**, point the DirectLake source at this workspace's
+  `Gold_LH` SQL endpoint, and publish as `Gold_SM`.
+
+> Publish from **modern Power BI Desktop / Tabular Editor** so the model has **Enhanced
+> Metadata** — it's mandatory for Deployment Pipelines (see Limitations). Note the
+> model's GUID and use it for the `SemanticModelId` pipeline parameter / Deployment Rule.
+
+### Step 9 — Build the Power BI report (`Gold_Dashboard`)
+With `Gold_SM` published, build the report:
+1. In the workspace: **New → Report → pick a published semantic model → `Gold_SM`**
+   (or in Power BI Desktop, **Get data → Power BI semantic models → Gold_SM** in
+   Live-connect mode — never import, so it stays DirectLake).
+2. Add visuals over the measures — e.g. *Total BOE* by `field`, *Avg Water Cut %*
+   trend by `date`, an `active_well_count` card, and a cost-vs-production combo.
+3. Save / publish it to the workspace as **`Gold_Dashboard`**.
+
+After Part B the workspace holds every item the Deployment Pipeline will promote:
+lakehouses, notebooks, data pipelines, dataflows, the semantic model, and the report.
+
+## Part C — Wire up CI/CD
+
+### Step 10 — Connect Git Integration
 In the workspace: **Workspace settings → Git integration → GitHub** — select the repo,
-branch, and folder, then connect.
+branch, and folder, then connect. **Source control → Update** pulls every item
+(notebooks, pipelines, dataflows, semantic model) into the workspace.
 
-### Step 7 — Commit to GitHub
+### Step 11 — Commit to GitHub
 In the workspace: **Source control** icon → select all items → add a commit message → **Commit**
 
-### Step 8 — Create Deployment Pipeline
+### Step 12 — Create the Deployment Pipeline
 In the Fabric portal: **Workspaces → Deployment pipelines → New pipeline**. Create two
-stages (Development → Production) and assign `ws-CICD-Dev` to Development and
+stages (**Development → Production**) and assign `ws-CICD-Dev` to Development and
 `ws-CICD-Prod` to Production. This **Fabric Deployment Pipeline** (pipeline type #2)
-promotes items across Dev → Prod. Note the pipeline ID — add it to GitHub secrets as
-`FABRIC_PIPELINE_ID`.
+promotes items across Dev → Prod.
 
-### Step 9 — Configure GitHub Actions
-Add these secrets to your GitHub repository:
-- `FABRIC_TENANT_ID`
-- `FABRIC_CLIENT_ID`
-- `FABRIC_CLIENT_SECRET`
-- `FABRIC_PIPELINE_ID`
+1. Open the pipeline → the **Development** stage shows all items from `ws-CICD-Dev`.
+2. Click **Deploy** once (Dev → Prod) to create the paired items in `ws-CICD-Prod`.
+   Verify in the **compare view** that every item is *paired* (linked icon), not
+   duplicated — unpaired same-name items create copies (see Limitations).
+3. Copy the **pipeline ID** from the browser URL (the GUID after `/pipelines/`). You'll
+   add it to GitHub secrets as `FABRIC_PIPELINE_ID` in Step 14.
 
-Copy `github_actions/*.yml` to `.github/workflows/` in your repo.
+### Step 13 — Configure the Deployment Rules
+**Deployment Rules** make the *same* item behave correctly in each stage — e.g. point
+the semantic model at the Prod `Gold_LH`, or pass `Environment=prod` to the pipeline.
+They are configured **once in the portal**, stored **on the deployment pipeline**, and
+applied **automatically on every deploy** (including deploys triggered by GitHub
+Actions — there is nothing rule-related to put in the YAML).
 
-### Step 10 — Refresh data after deployment
+`deployment_rules/deployment_rules.json` is the **reference** for what to enter (the
+rules themselves can't be imported from a file — see the automation note below). In the
+pipeline, click the **⚙️ Deployment rules** icon on the **Production** stage and add one
+rule per item:
+
+| Item | Rule type | What to set | Source in JSON |
+|------|-----------|-------------|----------------|
+| `PL_Refresh_Master` | **Parameter rule** | `Environment` → `prod` | rule 1 |
+| `PL_Refresh_Master` | **Parameter rule** | `SemanticModelId` → the Prod `Gold_SM` GUID | rule 2 |
+| `DF_Bronze_Production` | **Data source rule** | SharePoint connection → the Prod connection ID | rule 3 |
+| `Gold_SM` | **Data source rule** | Lakehouse binding → `ws-CICD-Prod/Gold_LH` SQL endpoint | rule 4 |
+
+> **Where do the IDs come from?** The `Gold_SM` GUID comes from Step 8; connection IDs
+> come from **Fabric Admin portal → Connections**. The JSON uses placeholders like
+> `<PROD_GOLD_SM_GUID>` — replace them with your real values as you fill in the UI.
+
+Click **Save**. From now on, every Dev → Prod deploy rewrites these settings in the
+target automatically.
+
+> **💡 Can the rules be automated?** Not really — deployment **rules** are effectively
+> portal-only (no stable public REST API to create them), so a notebook/script can't
+> reliably set them. What *can* be automated (and is, via GitHub Actions in the next
+> steps): creating the pipeline, assigning workspaces, triggering the deploy, and
+> running the post-deploy refresh. For richer cross-stage parameterization, Microsoft's
+> **`fabric-cicd`** Python library + a `parameter.yml` is the supported alternative.
+
+### Step 14 — Create a service principal & add GitHub secrets
+GitHub Actions deploys by calling the Fabric REST API as a **service principal** (SP),
+so it needs its own identity and secrets:
+
+1. **Register an Entra app** (Azure portal → **App registrations → New registration**).
+   Note the **Application (client) ID** and **Directory (tenant) ID**; under
+   **Certificates & secrets**, create a **client secret** and copy its value.
+2. **Enable the Fabric admin switch** *“Service principals can use Fabric APIs”*
+   (Fabric Admin portal → Tenant settings), scoped to a security group that contains
+   the SP.
+3. **Grant the SP access:** add it as a **Member/Admin** on both `ws-CICD-Dev` and
+   `ws-CICD-Prod`, and as an **Admin on the deployment pipeline** (Manage access).
+4. **Add the four secrets** in GitHub (**Settings → Secrets and variables → Actions**):
+   - `FABRIC_TENANT_ID` — Directory (tenant) ID
+   - `FABRIC_CLIENT_ID` — Application (client) ID
+   - `FABRIC_CLIENT_SECRET` — the client secret value
+   - `FABRIC_PIPELINE_ID` — the pipeline GUID from Step 12
+
+### Step 15 — Add the GitHub Actions workflow
+Copy `github_actions/deploy-dev-to-prod.yml` to `.github/workflows/` in your repo.
+What it does and how it ties together:
+
+- **Trigger:** runs on merge/push to `main` (or manual **Run workflow**).
+- **Auth:** exchanges the three SP secrets for a Fabric bearer token.
+- **Deploy:** calls `POST /v1/pipelines/{FABRIC_PIPELINE_ID}/deploy` with
+  `sourceStageOrder: 0` (Dev) → `targetStageOrder: 1` (Prod). The **deployment rules**
+  from Step 13 are applied **server-side** during this call — the YAML never references
+  them.
+- **Gate:** the job uses the GitHub **`production` environment**, so it pauses for
+  reviewer approval before the promotion runs. Configure that under
+  **Settings → Environments → production → Required reviewers**.
+- **Wait & report:** it polls the operation status and writes a deployment summary.
+
+### Step 16 — Refresh data after deployment
 Lakehouse deployments copy **structure only, not data**. After the pipeline deploys
 to Prod:
 1. **Attach the lakehouses** in the target workspace — open `NB_01` / `NB_02` / `NB_03`
@@ -186,14 +316,15 @@ to Prod:
    - running the **`PL_Refresh_Master`** data pipeline once (does all three + semantic
      model refresh in one click — the recommended option for Prod).
 
-### Step 11 — Demo the CI/CD Loop
+### Step 17 — Demo the CI/CD Loop
 1. Open `NB_02_Transform_Silver` in your dev workspace (`ws-CICD-Dev`)
 2. Uncomment the `gor_ratio` line (Gas-to-Oil Ratio KPI)
 3. Run the notebook — verify the new column appears
 4. Source Control → Commit: `feat: add gas-to-oil ratio KPI`
 5. GitHub: open PR from develop → main → review the diff → merge
 6. GitHub Actions runs `deploy-dev-to-prod.yml` → waits for reviewer approval on the
-   `production` environment, then promotes Dev → Prod
+   `production` environment, then promotes Dev → Prod (deployment rules re-bind the
+   Prod semantic model and parameters automatically)
 
 ## Key Limitations to Know
 
