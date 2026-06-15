@@ -3,6 +3,7 @@
   "_docs": "https://learn.microsoft.com/en-us/fabric/cicd/deployment-pipelines/create-rules",
   "pipeline": "DeployPipeline",
   "_promotion_model": "Deploy ALL supported items in a SINGLE pass so the Deployment Pipeline pairs them by name and rewrites internal references (including PL_Refresh_Master's activity GUIDs) to the paired Prod items. The three rules below cover the bindings that do NOT auto-rebind, so Prod has no orphaned GUIDs or datasource names.",
+  "_recommended_alternative": "Prefer the Variable Library (variable_library/VL_CICD_Bindings.json) for the notebook and dataflow bindings — IDs resolve at runtime from the active per-stage value set, so nothing carries a Dev GUID into Prod. Only the Gold_SM data-source rule below is still required (DirectLake can't consume a Variable Library). The notebook and dataflow rules here are the rules-only equivalent if you skip the Variable Library.",
   "_report_note": "Gold_Dashboard is a PBIR report. PBIR reports are NOT supported by deployment pipelines, so the report is delivered to Prod via Git (connect ws-CICD-Prod to the repo and Update). Its definition.pbir references Gold_SM byPath, so it binds to the Prod semantic model by name.",
   "rules": [
     {

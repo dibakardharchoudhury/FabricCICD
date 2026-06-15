@@ -1,0 +1,37 @@
+{
+  "_comment": "Reference for the Fabric Variable Library 'VL_CICD_Bindings'. Create it in the Fabric portal (Create -> Data Factory -> Variable library), add these variables, then add a value set per stage. The deployment pipeline activates the matching value set per stage (one-time 'Set as active' on each stage), so consumers resolve the correct IDs automatically — no orphaned GUIDs.",
+  "_docs": "https://learn.microsoft.com/en-us/fabric/cicd/variable-library/variable-library-overview",
+  "library": "VL_CICD_Bindings",
+  "_consumers": "Notebooks (notebookutils.variableLibrary), Dataflow Gen2 (parameter binding), Data pipeline. NOT consumable by the DirectLake semantic model or PBIR report — those use a deployment data-source rule and Git respectively.",
+  "variables": [
+    { "name": "WorkspaceId",        "type": "Guid", "note": "Current-stage workspace ID (all three lakehouses live here)" },
+    { "name": "BronzeLakehouseId",  "type": "Guid", "note": "Bronze_LH item ID in this stage" },
+    { "name": "SilverLakehouseId",  "type": "Guid", "note": "Silver_LH item ID in this stage (also feeds DF_Gold_PA SilverLakehouseId)" },
+    { "name": "GoldLakehouseId",    "type": "Guid", "note": "Gold_LH item ID in this stage" }
+  ],
+  "valueSets": {
+    "Development": {
+      "_setActiveOn": "Development stage / ws-CICD-Dev",
+      "WorkspaceId":       "<dev-workspace-id>",
+      "BronzeLakehouseId": "<dev-bronze_lh-id>",
+      "SilverLakehouseId": "<dev-silver_lh-id>",
+      "GoldLakehouseId":   "<dev-gold_lh-id>"
+    },
+    "Production": {
+      "_setActiveOn": "Production stage / ws-CICD-Prod",
+      "WorkspaceId":       "<prod-workspace-id>",
+      "BronzeLakehouseId": "<prod-bronze_lh-id>",
+      "SilverLakehouseId": "<prod-silver_lh-id>",
+      "GoldLakehouseId":   "<prod-gold_lh-id>"
+    }
+  },
+  "_howConsumersUseIt": {
+    "Notebook": "samplevl = notebookutils.variableLibrary.getLibrary('VL_CICD_Bindings'); build abfss path: f\"abfss://{samplevl.WorkspaceId}@onelake.dfs.fabric.microsoft.com/{samplevl.SilverLakehouseId}/Tables/...\" — or set the default lakehouse from SilverLakehouseId. No GUID is hardcoded in code, so notebooks never carry an orphaned lakehouse mapping.",
+    "DataflowGen2": "Bind DF_Gold_PA parameters SilverWorkspaceId -> WorkspaceId and SilverLakehouseId -> SilverLakehouseId via the Dataflow's variable-library integration, replacing the deployment-rule parameters.",
+    "DataPipeline": "Optional — PL_Refresh_Master's activity item references are already auto-paired by the deployment pipeline; use the library only if you need stage-specific literals."
+  },
+  "_stillNeedsDeploymentRuleOrGit": {
+    "Gold_SM": "DirectLake semantic model is not a variable-library consumer — keep the Data source deployment rule -> ws-CICD-Prod/Gold_LH (see deployment_rules.json).",
+    "Gold_Dashboard": "PBIR report is not supported by deployment pipelines — deliver via Git (connect ws-CICD-Prod to the repo and Update)."
+  }
+}
