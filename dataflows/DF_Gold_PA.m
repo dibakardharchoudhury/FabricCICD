@@ -6,16 +6,21 @@
 
 section DF_Gold_PA;
 
+// ── Parameters: Silver lakehouse identity (the READ source) ───────────────────
+// These two identify the SOURCE lakehouse you read FROM (Silver_LH), NOT the Gold
+// destination. The Gold_LH destination is configured separately via the dataflow's
+// "Add data destination" UI on the GoldProductionDaily query (it writes its own hidden
+// GoldProductionDaily_DataDestination query with the Gold IDs).
+// Replace these placeholder GUIDs with YOUR Silver_LH IDs — find them in the lakehouse
+// URL when you open Silver_LH in Fabric: .../groups/<SilverWorkspaceId>/lakehouses/<SilverLakehouseId>
+shared SilverWorkspaceId = "00000000-0000-0000-0000-000000000000" meta [IsParameterQuery = true, IsParameterQueryRequired = true, Type = type text];
+shared SilverLakehouseId = "00000000-0000-0000-0000-000000000000" meta [IsParameterQuery = true, IsParameterQueryRequired = true, Type = type text];
+
 // ── Source: Silver production_conformed ──────────────────────────────────────
-// ⚠️ Replace the two placeholder GUIDs below with YOUR Silver_LH workspace + lakehouse IDs.
-//    Find them in the lakehouse URL when you open Silver_LH in Fabric:
-//    .../groups/<WORKSPACE_GUID>/lakehouses/<LAKEHOUSE_GUID>
-//    (Or in the dataflow editor, just delete this Source step and re-create it with
-//     Get data → More → Lakehouse → pick Silver_LH → production_conformed.)
 shared SilverProduction = let
     Source = Lakehouse.Contents([CreateNavigationProperties = false, EnableFolding = false]),
-    Workspace = Source{[workspaceId = "00000000-0000-0000-0000-000000000000"]}[Data],
-    Lake = Workspace{[lakehouseId = "00000000-0000-0000-0000-000000000000"]}[Data],
+    Workspace = Source{[workspaceId = SilverWorkspaceId]}[Data],
+    Lake = Workspace{[lakehouseId = SilverLakehouseId]}[Data],
     Table = Lake{[Id = "production_conformed", ItemKind = "Table"]}[Data]
 in
     Table;
