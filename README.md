@@ -133,7 +133,7 @@ Deploy **all items in one pass** so the pipeline pairs them by name and rewrites
 
 **Option 1 — Deployment rules only (recommended).** Three rules on the Production stage cover everything that doesn't auto-bind (notebook default lakehouse, dataflow parameters, semantic-model data source). No extra items, no code changes. You create them **once** (after the first deploy, since a rule can only attach to an item that already exists in Prod) and they re-apply on every deploy after that. This is Steps 11–13. `deployment_rules/deployment_rules.json` lists the exact values.
 
-**Option 2 — Variable Library + the semantic-model rule.** Move the notebook and dataflow IDs into a Variable Library (`VL_CICD_Bindings`) with a value set per stage, so they resolve **at runtime** with no GUID in code; keep the `Gold_SM` data-source rule (DirectLake can't consume a Variable Library). Choose this only when you want config-as-code or many items share the same IDs. See `variable_library/VL_CICD_Bindings.json`.
+**Option 2 — Variable Library + the semantic-model rule.** A Variable Library (`VL_CICD_Bindings`) with a value set per stage can drive the two **data-plane** items at runtime — [supported consumers](https://learn.microsoft.com/en-us/fabric/cicd/variable-library/variable-library-overview#supported-items) include **notebooks** (an item-reference variable sets the default lakehouse via `%%configure`/NotebookUtils) and **Dataflow Gen2** (binds `SilverWorkspaceId`/`SilverLakehouseId`). This replaces the notebook + dataflow rules with config-as-code. **But the semantic model is *not* a Variable Library consumer** — so `Gold_SM` *always* needs the **data-source rule** (which means you must own it). Choose Option 2 when you want config-as-code or many items share the same IDs. See `variable_library/VL_CICD_Bindings.json`.
 
 ### Part C1 — Manual promotion
 
@@ -152,6 +152,8 @@ Deploy **all items in one pass** so the pipeline pairs them by name and rewrites
 | `Gold_SM` | **Data source** | DirectLake source → `ws-CICD-Prod` / `Gold_LH` |
 
   **No rule needed:** `PL_Refresh_Master` (activity GUIDs auto-pair) and `Gold_Dashboard` (autobinds to the paired Prod `Gold_SM`). Lakehouses just pair by name. Exact values are in `deployment_rules/deployment_rules.json`. Rules are portal-only (no REST API) and, once set, re-apply automatically on **every** future deploy — you set them once.
+
+> **`Gold_SM` rules greyed out?** Setting semantic-model rules **requires you to be the *owner*** of the model (docs: *"Configure semantic model rules — you must be the semantic model owner"*). The deploy clones a new `Gold_SM` in Prod whose owner is whoever deployed it — if that wasn't you, **both** rule sections grey out. Fix: open `Gold_SM` in the **Prod** workspace → **Take over / become owner**, then reopen the rule pane. (Parameter rules stay empty because a DirectLake model has no Power Query parameters — use the **Data source** rule.) A DirectLake model **never auto-binds** and Dataflow Gen2 **never auto-binds**, so without these rules a re-deploy leaves `Gold_SM` and `DF_Gold_PA` pointing at **Dev**.
 
   *Option 2 (Variable Library):* instead of the notebook + dataflow rules, point those items at `VL_CICD_Bindings` and set the active value set per stage; keep only the `Gold_SM` data-source rule.
 
@@ -188,6 +190,8 @@ Deploy **all items in one pass** so the pipeline pairs them by name and rewrites
 | Deploy | Lakehouse arrives **empty** — docs: *"a new empty lakehouse… is created in the target workspace"* | Run `PL_Refresh_Master` after deploy (creates schema + loads data) |
 | Deploy | Items added after assignment don't auto-pair; same-name unpaired items duplicate | Build all items first; verify pairing before deploying |
 | Deploy | DirectLake semantic models don't auto-bind | Data-source rule → Prod `Gold_LH` (Step 12) |
-| Deploy | Dataflow Gen2 doesn't auto-bind | Parameter rule → Prod `Silver_LH` (Step 12) |
+| Deploy | Semantic-model rules require **item ownership** — greyed out otherwise | Take over `Gold_SM` in the Prod workspace, then set the rule |
+| Deploy | Dataflow Gen2 doesn't auto-bind | Parameter rule → Prod `Silver_LH` (Step 12), or Variable Library |
+| Deploy | Semantic model is **not** a Variable Library consumer | `Gold_SM` always needs the data-source rule, even with Option 2 |
 | Notebook | Default-lakehouse GUID is workspace-specific | Default-lakehouse rule (Step 12); code also uses three-part names |
 | Semantic model | Needs Enhanced Metadata for pipelines | Fabric **New semantic model** already has it |

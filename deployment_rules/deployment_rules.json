@@ -11,7 +11,7 @@
       "type": "SemanticModel",
       "rule": "DataSourceRule",
       "required": true,
-      "description": "REQUIRED — DirectLake semantic models do not auto-bind. Binds the model to the stage's Gold_LH SQL endpoint.",
+      "description": "REQUIRED — DirectLake semantic models do NOT auto-bind (confirmed: MS Learn understand-the-deployment-process). Binds the model to the stage's Gold_LH. GREYED OUT unless you are the OWNER of the model (docs: 'Configure semantic model rules — you must be the semantic model owner') and the model already exists in the target stage. Parameter rules stay empty for a DirectLake model (no Power Query parameters). Variable Library CANNOT rebind a semantic model — it is not a VL consumer.",
       "stages": {
         "Development": { "dataSourceType": "Lakehouse", "connectionPath": "ws-CICD-Dev/Gold_LH" },
         "Production":  { "dataSourceType": "Lakehouse", "connectionPath": "ws-CICD-Prod/Gold_LH" }
