@@ -157,24 +157,30 @@ demo, or continue to Part B to add the pipelines, semantic model, and report.
 
 ### Step 6 — Import & run the data pipelines
 The two Data Factory pipelines in `pipelines/` give you orchestration and file-based
-ingestion (pipeline type #1). The `.json` files here are **Git-integration item
-definitions**, so bring them into the workspace one of two ways:
+ingestion (pipeline type #1). The pipeline editor's **Home → Import** button only
+accepts a **`.zip`**, *not* a raw `.json` — so this repo ships both:
 
-- **Via Git (recommended):** they arrive automatically when you sync the repo in
-  Step 10 — Fabric materializes the `.json` definitions into real pipeline items. This
-  is the supported path for the files in this repo.
-- **Manually via a template `.zip`:** the pipeline editor's **Home → Import** button
-  only accepts a **template `.zip`** (the kind produced by **Home → Export**), *not* a
-  raw Git `.json`. So to import manually you either:
-  1. Get a `.zip` — have a colleague open the pipeline and **Home → Export** (saves a
-     `<pipeline>.zip`), then **New → Data pipeline → Home → Import**, pick the `.zip`,
-     map connections, and **Use this template**; or
-  2. Rebuild it — **New → Data pipeline** and recreate the activities, using the
-     `pipelines/*.json` here as the reference for activities and parameters.
+| File | Use it for |
+| --- | --- |
+| `pipelines/PL_Copy_Bronze_Ingest.json`, `PL_Refresh_Master.json` | Git-integration item definitions (the source of truth) |
+| `pipelines/PL_Copy_Bronze_Ingest.zip`, `PL_Refresh_Master.zip` | Feeding the pipeline editor's **Home → Import** button |
 
-> 📌 You can't feed `PL_Copy_Bronze_Ingest.json` / `PL_Refresh_Master.json` straight
-> into the **Import** dialog — that dialog expects an exported template `.zip`. Use Git
-> integration (Step 10) to bring these exact definitions in unchanged.
+Bring them into the workspace one of two ways:
+
+- **Via Git (recommended):** the `.json` definitions arrive automatically when you sync
+  the repo in Step 10 — Fabric materializes them into real pipeline items. This is the
+  fully supported path and needs no manual import.
+- **Manually via the `.zip`:** **New → Data pipeline → Home → Import**, pick the
+  matching `pipelines/*.zip`, then **map the connections** to your workspace's
+  Lakehouses (the demo references them by name) and confirm.
+
+> 📌 The `.zip` files are generated from the `.json` by
+> [`scripts/04_build_pipeline_templates.ps1`](scripts/04_build_pipeline_templates.ps1)
+> (re-run it with `pwsh ./scripts/04_build_pipeline_templates.ps1` whenever you edit a
+> pipeline `.json`). Each `.zip` wraps the pipeline in Fabric's Git-item layout
+> (`pipeline-content.json` + `.platform`). If your tenant's **Import** dialog rejects a
+> hand-built `.zip`, fall back to **Git integration (Step 10)** — that path always works
+> for these exact definitions.
 
 Then:
 1. Open **`PL_Copy_Bronze_Ingest`** — point its source at the CSVs in **OneLake Files**
