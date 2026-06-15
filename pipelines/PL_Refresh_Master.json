@@ -2,7 +2,7 @@
   "name": "PL_Refresh_Master",
   "objectId": "00000000-0000-0000-0000-000000000001",
   "properties": {
-    "description": "Master orchestration pipeline — runs Bronze → Silver → Gold in sequence. Used in both stages (Dev/Prod). Environment parameter controls stage-specific behavior.",
+    "description": "Master orchestration pipeline — runs the full Medallion end to end: NB_01_Seed_Bronze → NB_02_Transform_Silver → DF_Gold_PA (builds Gold production_daily) → NB_03_Aggregate_Gold (cost/schedule/KPI tables) → Refresh Gold_SM. Used in both stages (Dev/Prod); the Environment parameter controls stage-specific behavior.",
     "activities": [
       {
         "name": "NB_Seed_Bronze",
@@ -50,11 +50,32 @@
         }
       },
       {
+        "name": "DF_Gold_Production",
+        "type": "RefreshDataflow",
+        "dependsOn": [
+          {
+            "activity": "NB_Transform_Silver",
+            "dependencyConditions": ["Succeeded"]
+          }
+        ],
+        "policy": {
+          "timeout": "0.01:00:00",
+          "retry": 1,
+          "retryIntervalInSeconds": 30
+        },
+        "typeProperties": {
+          "dataflowId": "DF_Gold_PA",
+          "workspaceId": "#{pipeline().parameters.WorkspaceId}",
+          "notifyOption": "NoNotification",
+          "dataflowType": "WorkspaceDataflow"
+        }
+      },
+      {
         "name": "NB_Aggregate_Gold",
         "type": "TridentNotebook",
         "dependsOn": [
           {
-            "activity": "NB_Transform_Silver",
+            "activity": "DF_Gold_Production",
             "dependencyConditions": ["Succeeded"]
           }
         ],

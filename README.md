@@ -8,13 +8,13 @@ End-to-end CI/CD demonstration with Medallion Lakehouse, GitHub integration, and
 Sources (PIMS / Alpha / SharePoint)
           ↓
 🟤 BRONZE LAYER (source-oriented)
-   Bronze_LH  ← PL_Copy_Bronze_Ingest + DF_Bronze_Production/Cost/Schedule
+   Bronze_LH  ← NB_01_Seed_Bronze
           ↓
 ⚙️  SILVER LAYER (domain-oriented)
-   Silver_LH  ← NB_02_Transform_Silver + DF_Silver_PA/Cost/Schedule
+   Silver_LH  ← NB_02_Transform_Silver
           ↓
 🥇 GOLD LAYER (report-oriented)
-   Gold_LH    ← NB_03_Aggregate_Gold + DF_Gold_PA/Cost/Schedule
+   Gold_LH    ← DF_Gold_PA (production_daily) + NB_03_Aggregate_Gold (cost / schedule / KPIs)
    Gold_SM (Semantic Model, DirectLake)
    Gold_Dashboard (Power BI Report)
           ↓
@@ -40,13 +40,10 @@ fabric-cicd-demo/
 │     (each is a Fabric Git folder: .platform + notebook-content.py)
 │
 ├── pipelines/
-│   ├── PL_Refresh_Master.json      — Master orchestration (Bronze→Silver→Gold→Refresh SM)
-│   └── PL_Copy_Bronze_Ingest.json  — Copy Activity pipeline for file ingestion
+│   └── PL_Refresh_Master.json      — Single end-to-end orchestration (NB_01 → NB_02 → DF_Gold_PA → NB_03 → Refresh SM)
 │
 ├── dataflows/
-│   ├── DF_Bronze_Production.m      — Power Query M: SharePoint → Bronze_LH
-│   ├── DF_Silver_PA.m              — Power Query M: Bronze → Silver production
-│   └── DF_Gold_PA.m                — Power Query M: Silver → Gold aggregation
+│   └── DF_Gold_PA.m              — Power Query M: Silver → Gold production_daily (the one Gold table NB_03 does not build)
 │
 ├── semantic_model/
 │   ├── Gold_SM.bim               — TMSL model definition (4 tables, 15+ measures)
@@ -66,29 +63,26 @@ makes every step below clear:
 
 | # | Name | Lives in | What it does | When you run it |
 |---|------|----------|--------------|-----------------|
-| 1 | **Data pipelines** | `pipelines/*.json` | Fabric Data Factory pipelines that move/transform *data* inside a workspace | During the data build / refresh (Steps 6 & 16) |
-| 2 | **Fabric Deployment Pipeline** | Fabric portal → Deployment pipelines | Promotes *items* (lakehouses, notebooks, pipelines, semantic model) across **Dev → Prod** workspaces | During CI/CD setup (Steps 12–13) and each promotion |
+| 1 | **Data pipeline** | `pipelines/PL_Refresh_Master.json` | One Fabric Data Factory pipeline that runs the whole Medallion build inside a workspace | During the data build / refresh (Steps 6 & 16) |
+| 2 | **Fabric Deployment Pipeline** | Fabric portal → Deployment pipelines | Promotes *items* (lakehouses, notebooks, pipeline, dataflow, semantic model) across **Dev → Prod** workspaces | During CI/CD setup (Steps 12–13) and each promotion |
 | 3 | **GitHub Actions “pipelines”** | `github_actions/*.yml` | CI/CD automation that triggers the Fabric Deployment Pipeline on push/merge | Automatically on git push (Steps 15 & 17) |
 
-### The two data pipelines (#1 above)
-- **`PL_Refresh_Master`** — *orchestration.* Runs the whole Medallion build in order:
+### The data pipeline (#1 above)
+- **`PL_Refresh_Master`** — *the single end-to-end orchestration.* Runs the whole
+  Medallion build in order:
   `NB_01_Seed_Bronze → NB_02_Transform_Silver → DF_Gold_PA → NB_03_Aggregate_Gold → Refresh Gold_SM`,
   with each step gated on the previous one succeeding. The **`DF_Gold_PA`** dataflow runs
-  before `NB_03` because it builds the Gold `production_daily` table that `NB_03`'s KPI
-  cell joins (add it as a Dataflow activity ahead of `NB_03`). **Run this for a one-click
-  full refresh** — especially after a deployment, because lakehouse deploys carry
-  structure but no data. It is parameterized by `Environment` / `WorkspaceId` /
-  `SemanticModelId` so the *same* pipeline works in Dev and Prod.
-- **`PL_Copy_Bronze_Ingest`** — *ingestion.* A Copy Activity pipeline that loads the raw
-  CSVs from OneLake Files into the Bronze Delta tables (with column mappings and an
-  incremental watermark). It is the “real-world ingestion” alternative to
-  `NB_01_Seed_Bronze`, which fakes Bronze data with inline rows for a zero-dependency demo.
+  (as a built-in **Dataflow** activity) before `NB_03` because it builds the Gold
+  `production_daily` table that `NB_03`'s KPI cell joins. **Run this one pipeline for a
+  full, one-click end-to-end refresh** — especially after a deployment, because lakehouse
+  deploys carry structure but no data. It is parameterized by `Environment` /
+  `WorkspaceId` / `SemanticModelId` so the *same* pipeline works in Dev and Prod.
 
 > **Which do I run to load data?**
 > - Simplest demo → run the **notebooks** `NB_01`→`NB_03`, plus the **`DF_Gold_PA`**
 >   dataflow before `NB_03` (it builds the Gold `production_daily` table).
-> - One-click refresh / post-deployment → run **`PL_Refresh_Master`**.
-> - To show file-based ingestion → run **`PL_Copy_Bronze_Ingest`** (then Silver/Gold).
+> - One-click end-to-end refresh / post-deployment → run **`PL_Refresh_Master`** (it runs
+>   all three notebooks **and** the `DF_Gold_PA` dataflow in the correct order).
 
 ## Quick Start
 
@@ -167,93 +161,84 @@ demo, or continue to Part B to add the pipelines, semantic model, and report.
 
 ## Part B — Add the analytics items
 
-### Step 6 — Import & run the data pipelines
-The two Data Factory pipelines in `pipelines/` give you orchestration and file-based
-ingestion (pipeline type #1). This repo ships each pipeline in **two formats**:
+### Step 6 — Import & run the data pipeline
+The single Data Factory pipeline `PL_Refresh_Master` orchestrates the whole Medallion
+build (pipeline type #1). This repo ships it in **two formats**:
 
 | File | Use it for |
 | --- | --- |
-| `PL_*.json` | Git-integration item definitions (the source of truth synced in Step 10) |
-| `PL_*.zip` | **Fabric template** packages for the pipeline editor's **Home → Import** button |
+| `PL_Refresh_Master.json` | Git-integration item definition (the source of truth synced in Step 10) |
+| `PL_Refresh_Master.zip` | **Fabric template** package for the pipeline editor's **Home → Import** button |
 
-The `.zip` files are real Fabric pipeline **templates** (the same structure Fabric itself
+The `.zip` file is a real Fabric pipeline **template** (the same structure Fabric itself
 produces via **Home → Export**: a `<Name>/` folder with `manifest.json` + an
-ARM-style `<Name>.json`). Bring the pipelines in one of two ways:
+ARM-style `<Name>.json`). Bring the pipeline in one of two ways:
 
-- **Via Git (recommended):** the `.json` definitions arrive automatically when you sync
-  the repo in Step 10 — Fabric materializes them into real pipeline items. No manual
+- **Via Git (recommended):** the `.json` definition arrives automatically when you sync
+  the repo in Step 10 — Fabric materializes it into a real pipeline item. No manual
   import needed.
-- **Via template Import:** **New → Data pipeline → Home → Import**, pick the matching
-  `pipelines/*.zip`, then **map the template parameters** to your workspace:
-  - `PL_Copy_Bronze_Ingest.zip` → bind **`LH_Bronze`** to your `Bronze_LH` lakehouse.
-  - `PL_Refresh_Master.zip` → bind the three notebook parameters (`NB_01_Seed_Bronze`,
-    `NB_02_Transform_Silver`, `NB_03_Aggregate_Gold`) and `SemanticModel_Gold` to the
-    items you create in Steps 5 and 8.
+- **Via template Import:** **New → Data pipeline → Home → Import**, pick
+  `pipelines/PL_Refresh_Master.zip`, then **map the template parameters** to your
+  workspace: bind the three notebook parameters (`NB_01_Seed_Bronze`,
+  `NB_02_Transform_Silver`, `NB_03_Aggregate_Gold`), the dataflow parameter `DF_Gold_PA`,
+  and `SemanticModel_Gold` to the items you create in Steps 5, 7, and 8.
 
 > 📌 A Fabric template `.zip` is **not** the raw Git `.json` — it wraps the pipeline in an
 > ARM deployment template (`parameters` / `resources`) with datasets inlined and
-> connections/lakehouses surfaced as parameters. If your tenant's **Import** rejects a
-> template, fall back to **Git integration (Step 10)**, which always works for these
-> exact definitions.
+> notebooks/dataflow/semantic-model surfaced as parameters. If your tenant's **Import**
+> rejects a template, fall back to **Git integration (Step 10)**, which always works for
+> this exact definition.
 
-Then:
-1. Open **`PL_Copy_Bronze_Ingest`** — point its source at the CSVs in **OneLake Files**
-   (uploaded by `NB_00`) and confirm the sink is `Bronze_LH`. Run it to demonstrate
-   file-based ingestion (the “real-world” alternative to the `NB_01` seed notebook).
-2. Open **`PL_Refresh_Master`** — it chains `NB_01 → NB_02 → NB_03` and then refreshes
-   the semantic model. Leave `Environment = dev`; the `WorkspaceId` / `SemanticModelId`
-   parameters are set per stage by Deployment Rules. Run it once for a one-click
-   end-to-end refresh.
+Then open **`PL_Refresh_Master`** — it chains
+`NB_01 → NB_02 → DF_Gold_PA → NB_03 → Refresh Gold_SM`, with each step gated on the
+previous one. Leave `Environment = dev`; the `WorkspaceId` / `SemanticModelId` parameters
+are set per stage by Deployment Rules. Run it once for a one-click end-to-end refresh.
 
 > The `SemanticModelId` parameter stays empty until you create the semantic model in
 > Step 8 — fill it in (or set it via Deployment Rules) afterwards so the refresh
 > activity can find the model.
 
-### Step 7 — (Optional) Build the Dataflows Gen2
-The `dataflows/*.m` files are Power Query M scripts that show the **dataflow-based** path
-for the Medallion layers (`DF_Bronze_Production`, `DF_Silver_PA`, `DF_Gold_PA`). They're
-an alternative to the notebooks — **skip this whole step** if you already built the data
-with notebooks in Step 5. They're here to demonstrate the low-code ingestion option.
+### Step 7 — Build the Gold Dataflow Gen2 (`DF_Gold_PA`) — required
+`dataflows/DF_Gold_PA.m` is the Power Query M script for the **one** dataflow in this
+demo. It owns the Gold `production_daily` table — the single Gold table that
+`NB_03_Aggregate_Gold` does **not** build — so the Gold layer is completed by **two
+artifacts together**: `DF_Gold_PA` (production aggregation) + `NB_03` (cost / schedule /
+KPI tables). This step is **not optional**: build and run `DF_Gold_PA` before `NB_03`
+(or just run `PL_Refresh_Master`, which runs it for you as a Dataflow activity).
 
 > ℹ️ **What is a Dataflow Gen2?** It's Fabric's low-code ETL item built on Power Query.
 > You connect to a source, transform with the Power Query editor (or M code), and set a
-> **data destination** (here, the lakehouse). Each `.m` file is the Power Query script
-> behind one dataflow.
+> **data destination** (here, the lakehouse). The `.m` file is the Power Query script
+> behind the dataflow; `DF_Gold_PA.pqt` is the same logic packaged for **Import from a
+> Power Query template**.
 
-**Create one dataflow (repeat for each `.m` file):**
+**Create the dataflow:**
 
 1. In your workspace, click **+ New item** → search **Dataflow Gen2** → select it (or use
-   **New → More options → Data Factory → Dataflow Gen2**). Name it after the file, e.g.
-   `DF_Bronze_Production`.
+   **New → More options → Data Factory → Dataflow Gen2**). Name it **`DF_Gold_PA`**.
+   *(Or use **Import from a Power Query template** and pick `dataflows/DF_Gold_PA.pqt` to
+   load the queries in one shot, then jump to step 6 to set the destination.)*
 2. The Power Query editor opens. You now need a query to paste the M into:
    - Click **Get data → Blank query** (under *Other* ), **or**
    - If you see the *Home* ribbon, click **Get data → Blank query**.
 3. In the blank query, open the **Advanced editor**: *Home* ribbon → **Advanced editor**
    (or right-click the query in the left **Queries** pane → **Advanced editor**).
-4. **Delete the default snippet**, then paste the body of the matching `.m` file. ⚠️ Paste
-   only the `let … in …` expression for the query — **not** the `section …;` line or the
+4. **Delete the default snippet**, then paste the body of `DF_Gold_PA.m`. ⚠️ Paste
+   only the `let … in …` expression for each query — **not** the `section …;` line or the
    `shared QueryName =` prefix (those are file-packaging syntax, not valid in the editor).
-   For `DF_Bronze_Production.m`, paste from `let` through the final `FinalTable;`.
-5. Click **OK**. Fix the **source connection** when prompted:
-   - **SharePoint path (default in the script):** replace `https://yourorg.sharepoint.com/…`
-     with your real SharePoint site and sign in when asked.
-   - **No-SharePoint demo:** comment out the SharePoint lines and uncomment the
-     `Lakehouse.Contents("Bronze_LH")` block in the `.m` file so it reads the CSV that
-     `NB_00` uploaded to **OneLake Files**.
+   `DF_Gold_PA.m` defines two queries (`SilverProduction`, then `GoldProductionDaily`) —
+   create one **Blank query** per query and paste each `let … in …` body separately.
+5. Click **OK**. The source reads `Silver_LH.production_conformed` via
+   `Lakehouse.Contents(null)` — confirm/select your `Silver_LH` when prompted.
 6. Set the **data destination** (bottom-right **Data destination** ⊕, or the gear on the
-   last applied step): choose **Lakehouse** → pick the target lakehouse and table:
-   - `DF_Bronze_Production` → `Bronze_LH` table `production_raw`
-   - `DF_Silver_PA` → `Silver_LH` (the silver table the script builds)
-   - `DF_Gold_PA` → `Gold_LH` (the gold table the script builds)
-
-   Set **Update method = Append** for incremental loads (or **Replace** for a full refresh),
-   map the columns, and confirm.
+   last applied step) on the **`GoldProductionDaily`** query: choose **Lakehouse** →
+   `Gold_LH` → table **`production_daily`**, **Update method = Replace**, map the columns,
+   and confirm.
 7. Click **Publish** (bottom-right). Fabric saves and runs the dataflow; refresh it any
-   time from the workspace list (**⋯ → Refresh**) to reload the lakehouse table.
+   time from the workspace list (**⋯ → Refresh**) to rebuild `Gold_LH.production_daily`.
 
-> 💡 Prefer pasting M one query at a time. If a `.m` file defines several `shared`
-> queries, create one **Blank query** per query and paste each `let … in …` body
-> separately, then wire the destination on the final output query.
+> 💡 Run `DF_Gold_PA` **before** `NB_03_Aggregate_Gold` — `NB_03`'s KPI cell joins
+> `production_daily` and stops with a clear message if that table is missing.
 
 ### Step 8 — Create the semantic model (`Gold_SM`)
 `semantic_model/Gold_SM.bim` is a TMSL model over the Gold layer using **DirectLake**.
@@ -369,8 +354,7 @@ rule per item:
 |------|-----------|-------------|----------------|
 | `PL_Refresh_Master` | **Parameter rule** | `Environment` → `prod` | rule 1 |
 | `PL_Refresh_Master` | **Parameter rule** | `SemanticModelId` → the Prod `Gold_SM` GUID | rule 2 |
-| `DF_Bronze_Production` | **Data source rule** | SharePoint connection → the Prod connection ID | rule 3 |
-| `Gold_SM` | **Data source rule** | Lakehouse binding → `ws-CICD-Prod/Gold_LH` SQL endpoint | rule 4 |
+| `Gold_SM` | **Data source rule** | Lakehouse binding → `ws-CICD-Prod/Gold_LH` SQL endpoint | rule 3 |
 
 > **Where do the IDs come from?** The `Gold_SM` GUID comes from Step 8; connection IDs
 > come from **Fabric Admin portal → Connections**. The JSON uses placeholders like

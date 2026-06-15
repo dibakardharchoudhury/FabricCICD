@@ -24,22 +24,6 @@
       }
     },
     {
-      "item": "DF_Bronze_Production",
-      "type": "DataflowGen2",
-      "rule": "DataSourceRule",
-      "description": "Points Bronze Dataflow at the correct SharePoint environment",
-      "stages": {
-        "Development": {
-          "dataSourceType": "SharePoint",
-          "connectionId":   "<DEV_SHAREPOINT_CONNECTION_ID>"
-        },
-        "Production": {
-          "dataSourceType": "SharePoint",
-          "connectionId":   "<PROD_SHAREPOINT_CONNECTION_ID>"
-        }
-      }
-    },
-    {
       "item": "Gold_SM",
       "type": "SemanticModel",
       "rule": "DataSourceRule",
@@ -61,6 +45,6 @@
     "2. Click ⚙️ Deployment Rules on the Dev→Prod stage boundary",
     "3. For each rule above: select the item → choose rule type → fill in values per stage",
     "4. Rules are applied automatically every time you deploy between stages",
-    "5. Rules for DataflowGen2 and SemanticModel require the Connection ID from Fabric Admin Portal → Connections"
+    "5. Rules for the SemanticModel data source require the Connection ID from Fabric Admin Portal → Connections"
   ]
 }
