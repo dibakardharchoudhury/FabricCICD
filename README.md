@@ -228,8 +228,18 @@ This repo ships the dataflow in **two formats** — pick whichever you prefer:
 2. In the Power Query editor, **Get data → Import from a Power Query template** and select
    `dataflows/DF_Gold_PA.pqt`. Both queries (`SilverProduction`, `GoldProductionDaily`)
    load in already wired together.
-3. Confirm/select your **`Silver_LH`** lakehouse if prompted (the source reads
-   `Silver_LH.production_conformed`).
+3. **Point the source at *your* `Silver_LH`.** A Power Query template can't know the GUIDs
+   of your lakehouse, so `SilverProduction` ships with two placeholder GUIDs. Open your
+   `Silver_LH` in Fabric and copy the two IDs from its URL:
+   `…/groups/<WORKSPACE_GUID>/lakehouses/<LAKEHOUSE_GUID>`. Then in the
+   `SilverProduction` query's **Advanced editor**, replace the two
+   `00000000-0000-0000-0000-000000000000` values with your `<WORKSPACE_GUID>` and
+   `<LAKEHOUSE_GUID>`.
+   - *Easiest alternative:* delete the `Source` step and re-create it with **Get data →
+     More → Lakehouse → `Silver_LH` → `production_conformed`** — Fabric fills in the
+     correct GUIDs for you.
+   - This fixes the `Expression.Error: The key didn't match any rows in the table.` that
+     appears while the placeholder GUIDs are still in place.
 4. Set the **data destination** on **`GoldProductionDaily`** → **Lakehouse** → `Gold_LH` →
    table **`production_daily`**, **Update method = Replace**, then **Publish**.
 
@@ -247,8 +257,12 @@ This repo ships the dataflow in **two formats** — pick whichever you prefer:
    `shared QueryName =` prefix (those are file-packaging syntax, not valid in the editor).
    `DF_Gold_PA.m` defines two queries (`SilverProduction`, then `GoldProductionDaily`) —
    create one **Blank query** per query and paste each `let … in …` body separately.
-5. Click **OK**. The source reads `Silver_LH.production_conformed` via
-   `Lakehouse.Contents(null)` — confirm/select your `Silver_LH` when prompted.
+5. Click **OK**. The `SilverProduction` source reads `Silver_LH.production_conformed`. The
+   `.m` ships with two placeholder GUIDs — replace the `workspaceId` / `lakehouseId`
+   `00000000-…` values with your `Silver_LH` IDs (from its URL
+   `…/groups/<WORKSPACE_GUID>/lakehouses/<LAKEHOUSE_GUID>`), **or** simply re-create the
+   `Source` step via **Get data → More → Lakehouse → `Silver_LH` → `production_conformed`**
+   so Fabric fills in the correct GUIDs.
 6. Set the **data destination** (bottom-right **Data destination** ⊕, or the gear on the
    last applied step) on the **`GoldProductionDaily`** query: choose **Lakehouse** →
    `Gold_LH` → table **`production_daily`**, **Update method = Replace**, map the columns,

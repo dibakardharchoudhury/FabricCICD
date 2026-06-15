@@ -7,10 +7,16 @@
 section DF_Gold_PA;
 
 // ── Source: Silver production_conformed ──────────────────────────────────────
+// ⚠️ Replace the two placeholder GUIDs below with YOUR Silver_LH workspace + lakehouse IDs.
+//    Find them in the lakehouse URL when you open Silver_LH in Fabric:
+//    .../groups/<WORKSPACE_GUID>/lakehouses/<LAKEHOUSE_GUID>
+//    (Or in the dataflow editor, just delete this Source step and re-create it with
+//     Get data → More → Lakehouse → pick Silver_LH → production_conformed.)
 shared SilverProduction = let
-    LH     = Lakehouse.Contents(null),
-    Silver = LH{[workspaceId = null, lakehouseId = null, Id = "Tables"]}[Data],
-    Table  = Silver{[Name = "production_conformed"]}[Data]
+    Source = Lakehouse.Contents([CreateNavigationProperties = false, EnableFolding = false]),
+    Workspace = Source{[workspaceId = "00000000-0000-0000-0000-000000000000"]}[Data],
+    Lake = Workspace{[lakehouseId = "00000000-0000-0000-0000-000000000000"]}[Data],
+    Table = Lake{[Id = "production_conformed", ItemKind = "Table"]}[Data]
 in
     Table;
 
