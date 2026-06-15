@@ -72,18 +72,21 @@ makes every step below clear:
 
 ### The two data pipelines (#1 above)
 - **`PL_Refresh_Master`** — *orchestration.* Runs the whole Medallion build in order:
-  `NB_01_Seed_Bronze → NB_02_Transform_Silver → NB_03_Aggregate_Gold → Refresh Gold_SM`,
-  with each step gated on the previous one succeeding. **Run this for a one-click full
-  refresh** — especially after a deployment, because lakehouse deploys carry structure
-  but no data. It is parameterized by `Environment` / `WorkspaceId` / `SemanticModelId`
-  so the *same* pipeline works in Dev and Prod.
+  `NB_01_Seed_Bronze → NB_02_Transform_Silver → DF_Gold_PA → NB_03_Aggregate_Gold → Refresh Gold_SM`,
+  with each step gated on the previous one succeeding. The **`DF_Gold_PA`** dataflow runs
+  before `NB_03` because it builds the Gold `production_daily` table that `NB_03`'s KPI
+  cell joins (add it as a Dataflow activity ahead of `NB_03`). **Run this for a one-click
+  full refresh** — especially after a deployment, because lakehouse deploys carry
+  structure but no data. It is parameterized by `Environment` / `WorkspaceId` /
+  `SemanticModelId` so the *same* pipeline works in Dev and Prod.
 - **`PL_Copy_Bronze_Ingest`** — *ingestion.* A Copy Activity pipeline that loads the raw
   CSVs from OneLake Files into the Bronze Delta tables (with column mappings and an
   incremental watermark). It is the “real-world ingestion” alternative to
   `NB_01_Seed_Bronze`, which fakes Bronze data with inline rows for a zero-dependency demo.
 
 > **Which do I run to load data?**
-> - Simplest demo → just run the **notebooks** `NB_01`→`NB_03` (no pipeline needed).
+> - Simplest demo → run the **notebooks** `NB_01`→`NB_03`, plus the **`DF_Gold_PA`**
+>   dataflow before `NB_03` (it builds the Gold `production_daily` table).
 > - One-click refresh / post-deployment → run **`PL_Refresh_Master`**.
 > - To show file-based ingestion → run **`PL_Copy_Bronze_Ingest`** (then Silver/Gold).
 
@@ -148,7 +151,16 @@ workspace before running.
 1. `NB_00_Setup_Environment` — confirms `Bronze_LH`, `Silver_LH`, `Gold_LH` exist
 2. `NB_01_Seed_Bronze`        — writes Bronze Delta tables from inline sample data
 3. `NB_02_Transform_Silver`   — Bronze → Silver (clean, conform, KPIs)
-4. `NB_03_Aggregate_Gold`     — Silver → Gold (aggregates + KPI fact table)
+4. `DF_Gold_PA` (Dataflow Gen2) — Silver → Gold **`production_daily`** (see Step 7)
+5. `NB_03_Aggregate_Gold`     — Gold `cost_monthly` + `schedule_summary` + cross-domain
+   `field_kpi_facts`. **Requires `DF_Gold_PA` to have run first** — its KPI cell joins
+   `production_daily` and stops with a clear message if that table is missing.
+
+> **Why the split?** The Gold layer is completed by **two** artifacts on purpose:
+> the low-code **`DF_Gold_PA`** dataflow owns the production aggregation
+> (`production_daily`), and **`NB_03`** owns the cost/schedule/KPI tables. Together
+> they finish Gold — neither does the whole job alone. For a notebooks-only quick demo
+> you still need to run `DF_Gold_PA` (Step 7) before `NB_03`.
 
 After Step 5 you have a fully built Medallion lakehouse. Stop here for a data-only
 demo, or continue to Part B to add the pipelines, semantic model, and report.
