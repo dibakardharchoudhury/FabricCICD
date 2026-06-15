@@ -71,9 +71,35 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
 
    (Manual fallback: paste each `let … in …` body from `DF_Gold_PA.m` into a Blank query — omit the `section`/`shared` lines.)
 
-**8. Create the semantic model `Gold_SM`** — `semantic_model/Gold_SM.bim` is a DirectLake TMSL model: tables `production_daily`, `cost_monthly`, `schedule_summary`, `field_kpi_facts` + a calculated `DateDim`, with measures `Total BOE` and `Total Cost (USD)`.
-- **From the `.bim` (recommended):** open in Tabular Editor / Power BI Desktop, point the DirectLake source at this workspace's `Gold_LH` SQL endpoint, deploy as `Gold_SM`. Publish from modern tooling so the model has **Enhanced Metadata** (mandatory for Deployment Pipelines). Copy its GUID for the `SemanticModelId` Deployment Rule.
-- **From Fabric (click-through):** open `Gold_LH` → **New semantic model** → tick the Gold tables → Confirm. Add `DateDim` as a calculated table `= CALENDAR(DATE(2024,1,1), DATE(2024,12,31))`, the relationship to `production_daily[date]`, and the two measures.
+**8. Create the semantic model `Gold_SM`** — `semantic_model/Gold_SM.bim` is a DirectLake TMSL model over the four Gold tables (`production_daily`, `cost_monthly`, `schedule_summary`, `field_kpi_facts`) plus a calculated `DateDim`, with measures already defined.
+- **From the `.bim` (recommended):** open in Tabular Editor / Power BI Desktop, point the DirectLake source at this workspace's `Gold_LH` SQL endpoint, deploy as `Gold_SM`. Everything below (DateDim, columns, relationships, measures) is already in the file — nothing to re-type. Publish from modern tooling so the model has **Enhanced Metadata** (mandatory for Deployment Pipelines). Copy its GUID for the `SemanticModelId` Deployment Rule.
+- **From Fabric (click-through):** open `Gold_LH` → **New semantic model** → tick the four Gold tables → Confirm, then add the date dimension, relationship and measures by hand:
+
+  **a. Calculated table `DateDim`** — Model view → **New table**, paste:
+  ```DAX
+  DateDim = CALENDAR(DATE(2024,1,1), DATE(2024,12,31))
+  ```
+  Then add these **calculated columns** (one **New column** each, on the `DateDim` table):
+  ```DAX
+  Year       = YEAR([Date])
+  Month      = MONTH([Date])
+  MonthName  = FORMAT([Date], "MMM YYYY")
+  Quarter    = "Q" & QUARTER([Date])
+  WeekNumber = WEEKNUM([Date])
+  ```
+  Mark `DateDim[Date]` as the date key (Column tools → **Mark as date table** → `Date`).
+
+  **b. Relationship** — drag `production_daily[date]` → `DateDim[Date]` (many-to-one, **single** cross-filter direction).
+
+  **c. Measures** — create on the table shown in parentheses (right-click table → **New measure**). These are the headline ones used by the report; the `.bim` has more:
+  ```DAX
+  Total BOE        = SUM(production_daily[total_boe])                 -- (production_daily)
+  BOE Last Day     = CALCULATE(SUM(production_daily[total_boe]), LASTDATE(production_daily[date]))
+  Total Cost (USD) = SUM(cost_monthly[total_cost_usd])               -- (cost_monthly)
+  OPEX Total       = CALCULATE(SUM(cost_monthly[total_cost_usd]), cost_monthly[cost_type] = "OPEX")
+  CAPEX Total      = CALCULATE(SUM(cost_monthly[total_cost_usd]), cost_monthly[cost_type] = "CAPEX")
+  ```
+  Set format strings (`#,##0.00` for BOE, `$ #,##0` for cost). Save.
 
 > ⚠️ **`production_daily` missing from the table picker?** Tables written by **Dataflow Gen2** (`production_daily`) appear in the SQL analytics endpoint / OneLake picker **after a metadata sync**, while Spark/notebook tables show immediately. If the New-semantic-model dialog lists only `cost_monthly` / `schedule_summary` / `field_kpi_facts`: open **`Gold_LH` → SQL analytics endpoint**, click **Refresh** (or the ⟳ icon in the table picker), wait a few seconds, and re-open the dialog. The `.bim` already defines `production_daily`, so the Git/`.bim` path is unaffected — this is only the live picker lagging.
 
