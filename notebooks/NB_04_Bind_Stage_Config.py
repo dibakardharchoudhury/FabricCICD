@@ -69,6 +69,7 @@ import sempy_labs as labs
 from sempy_labs import directlake
 from sempy_labs import variable_library as vlib
 import notebookutils
+from IPython.display import display, HTML
 
 VL_NAME = "VL_CICD_Bindings"
 
@@ -79,6 +80,18 @@ VL_NAME = "VL_CICD_Bindings"
 def _quiet():
     with contextlib.redirect_stdout(io.StringIO()):
         yield
+
+# Helper for pretty output: render a styled status line as HTML instead of plain print().
+# kind = ok (green) | info (blue) | warn (amber). Fabric renders display(HTML(...)) inline.
+def _say(msg, kind="ok"):
+    color = {"ok": "#1a7f37", "info": "#0969da", "warn": "#9a6700"}.get(kind, "#1a7f37")
+    icon  = {"ok": "✓", "info": "ℹ", "warn": "⚠"}.get(kind, "✓")
+    display(HTML(
+        f'<div style="font-family:Segoe UI,system-ui,sans-serif;font-size:13px;'
+        f'padding:5px 12px;margin:3px 0;border-left:3px solid {color};'
+        f'background:{color}14;color:#24292f;border-radius:4px">'
+        f'<span style="color:{color};font-weight:700">{icon}</span>&nbsp; {msg}</div>'
+    ))
 
 # Cell 3 — Fabric REST helpers (resolve NAMES -> GUIDs). Control-plane only; no lakehouse.
 _FABRIC_BASE = "https://api.fabric.microsoft.com/v1"
@@ -223,9 +236,9 @@ if not _already_exists:
             value_sets_order=["Development", "Production"],
             description="CI/CD stage bindings consumed by notebooks, DF_Gold_PA, and (via this notebook) Gold_SM.",
         )
-    print(f"→ Variable Library '{VL_NAME}' created (Development default, Production override).")
+    _say(f"Variable Library <b>{VL_NAME}</b> created (Development default, Production override).")
 else:
-    print(f"→ Variable Library '{VL_NAME}' already exists — reused as the source of truth.")
+    _say(f"Variable Library <b>{VL_NAME}</b> already exists — reused as the source of truth.", "info")
 
 # Cell 5 — Activate the value set that matches THIS workspace (dev->Development, prod->Production)
 # THIS is what makes "dev values in Dev, prod values in Prod" happen. getLibrary() (Cell 7)
@@ -247,10 +260,10 @@ if ACTIVE_SET:
         "PATCH", f"/workspaces/{CURRENT_WS_ID}/variableLibraries/{vl_id}",
         {"properties": {"activeValueSetName": ACTIVE_SET}},
     )
-    print(f"→ Active value set for '{VL_NAME}' set to '{ACTIVE_SET}' (workspace '{CURRENT_WS_NAME}').")
+    _say(f"Active value set for <b>{VL_NAME}</b> set to <b>{ACTIVE_SET}</b> (workspace <b>{CURRENT_WS_NAME}</b>).")
 else:
-    print(f"⚠ Workspace '{CURRENT_WS_NAME}' is neither the Dev nor Prod name in Cell 1 — "
-          f"leaving the active value set unchanged.")
+    _say(f"Workspace <b>{CURRENT_WS_NAME}</b> is neither the Dev nor Prod name in Cell 1 — "
+         f"leaving the active value set unchanged.", "warn")
 
 # Cell 6 — Pre-flight: verify the three lakehouses exist in THIS workspace
 # Folds in the former NB_00_Setup_Environment. Lakehouses are created by workspace setup
@@ -265,7 +278,7 @@ if _missing_lakehouses:
         f"  - Create them in Fabric before running this notebook.\n"
         f"  Lakehouses present: {', '.join(sorted(_present_lakehouses)) or '(none)'}"
     )
-print(f"→ Lakehouses verified in '{CURRENT_WS_NAME}': {', '.join(_expected_lakehouses)}.")
+_say(f"Lakehouses verified in <b>{CURRENT_WS_NAME}</b>: {', '.join(_expected_lakehouses)}.")
 
 # Cell 7 — Read the now-active Variable Library value set (single source of truth)
 # Notebooks are a Variable Library consumer via NotebookUtils. getLibrary resolves the value
@@ -331,20 +344,20 @@ notebook_to_default = {
 
 def _set_lakehouse_in_source(source, lakehouse_block):
     """Set dependencies.lakehouse inside a notebook's GIT-friendly source definition.
-    The notebook-level metadata is a JSON object spread across the contiguous '# META ...'
-    lines just under the '# METADATA ********************' header. We strip the prefix, parse
-    the JSON, set the lakehouse block, then re-emit the '# META' lines in place."""
+    The notebook-level metadata is a JSON document carried across the FIRST contiguous run
+    of '# META ' comment lines (each line = '# META ' + one line of pretty-printed JSON).
+    Note: the '# METADATA ********************' section header is NOT part of the JSON and is
+    separated from the '# META ' block by a blank line, so we locate the '# META ' run directly
+    (requiring the trailing space also excludes the '# METADATA' header). We parse the JSON,
+    set the lakehouse block, then re-emit the '# META ' lines in place."""
     lines = source.splitlines()
-    try:
-        marker = next(i for i, ln in enumerate(lines)
-                      if ln.strip() == "# METADATA ********************")
-    except StopIteration as e:
-        raise RuntimeError("Notebook source has no '# METADATA' header — cannot bind lakehouse.") from e
-    start = marker + 1
+    start = next((i for i, ln in enumerate(lines) if ln.startswith("# META ")), None)
+    if start is None:
+        raise RuntimeError("Notebook source has no '# META' metadata block — cannot bind lakehouse.")
     end = start
-    while end < len(lines) and lines[end].startswith("# META"):
+    while end < len(lines) and lines[end].startswith("# META "):
         end += 1
-    meta = json.loads("\n".join(re.sub(r"^# META ?", "", ln) for ln in lines[start:end]))
+    meta = json.loads("\n".join(ln[len("# META "):] for ln in lines[start:end]))
     meta.setdefault("dependencies", {})["lakehouse"] = lakehouse_block
     new_meta = ["# META " + l for l in json.dumps(meta, indent=2).splitlines()]
     return "\n".join(lines[:start] + new_meta + lines[end:])
@@ -361,7 +374,7 @@ for nb_name, (lh_name, lh_id) in notebook_to_default.items():
     source = _set_lakehouse_in_source(source, lakehouse_block)
     with _quiet():
         labs.update_notebook_definition(nb_name, notebook_content=source, workspace=WORKSPACE_ID)
-    print(f"→ {nb_name}: default {lh_name}, attached Bronze_LH + Silver_LH + Gold_LH.")
+    _say(f"<b>{nb_name}</b>: default {lh_name}, attached Bronze_LH + Silver_LH + Gold_LH.")
 
 # Cell 9 — (2) Bind Dataflow Gen2 DF_Gold_PA parameters to this stage's Silver lakehouse
 # DF Gen2 can't be rebound by a data-source rule; its parameters carry the IDs. We patch
@@ -399,11 +412,11 @@ if changed:
         {"definition": definition},
     )
     DF_BOUND = True
-    print(f"→ {DATAFLOW_NAME}: SilverWorkspaceId/SilverLakehouseId set to this stage's Silver_LH.")
+    _say(f"<b>{DATAFLOW_NAME}</b>: SilverWorkspaceId/SilverLakehouseId set to this stage's Silver_LH.")
 else:
     DF_BOUND = False
-    print(f"⚠ {DATAFLOW_NAME}: no matching parameter literals found — verify parameter names "
-          f"({', '.join(param_values)}) exist in the dataflow.")
+    _say(f"<b>{DATAFLOW_NAME}</b>: no matching parameter literals found — verify parameter names "
+         f"({', '.join(param_values)}) exist in the dataflow.", "warn")
 
 # Cell 10 — (3) Rebind Gold_SM (Direct Lake ON ONELAKE) to this stage's Gold_LH
 # A data-source deployment rule is NOT supported for Direct Lake on OneLake; instead we
@@ -418,23 +431,42 @@ with _quiet():
         source_workspace=WORKSPACE_ID,
         use_sql_endpoint=False,
     )
-print("→ Gold_SM: Direct Lake on OneLake connection set to this stage's Gold_LH.")
+_say("<b>Gold_SM</b>: Direct Lake on OneLake connection set to this stage's Gold_LH.")
 
-# Cell 11 — Summary (concise, stage-aware)
-_line = "─" * 64
-print()
-print("═" * 64)
-print("  NB_04 — stage binding complete")
-print("═" * 64)
-print(f"  Stage workspace : {CURRENT_WS_NAME}  ({WORKSPACE_ID})")
-print(f"  Active value set: {ACTIVE_SET or '(unchanged)'}")
-print(_line)
-print(f"  {'Notebook':<24}{'Default LH':<12}Attached")
-print(f"  {'NB_01_Seed_Bronze':<24}{'Bronze_LH':<12}Bronze + Silver + Gold")
-print(f"  {'NB_02_Transform_Silver':<24}{'Silver_LH':<12}Bronze + Silver + Gold")
-print(f"  {'NB_03_Aggregate_Gold':<24}{'Gold_LH':<12}Bronze + Silver + Gold")
-print(_line)
-print(f"  DF_Gold_PA   -> Silver_LH params {'set' if DF_BOUND else 'UNCHANGED (check names)'}")
-print("  Gold_SM      -> Gold_LH (Direct Lake on OneLake)")
-print("═" * 64)
-print("  Next: NB_01 -> NB_02 -> DF_Gold_PA -> NB_03 now load THIS stage.")
+# Cell 11 — Summary (rich HTML card, stage-aware)
+_cell = "padding:6px 16px;border-bottom:1px solid #eaeef2"
+_rows = "".join(
+    f"<tr><td style='{_cell}'>{nb}</td>"
+    f"<td style='{_cell}'><b>{lh}</b></td>"
+    f"<td style='{_cell}'>Bronze + Silver + Gold</td></tr>"
+    for nb, lh in [("NB_01_Seed_Bronze", "Bronze_LH"),
+                   ("NB_02_Transform_Silver", "Silver_LH"),
+                   ("NB_03_Aggregate_Gold", "Gold_LH")]
+)
+_df_txt = "set ✓" if DF_BOUND else "<span style='color:#9a6700'>UNCHANGED (check names)</span>"
+display(HTML(f"""
+<div style="font-family:Segoe UI,system-ui,sans-serif;max-width:700px;border:1px solid #d0d7de;
+            border-radius:10px;overflow:hidden;margin:10px 0;box-shadow:0 1px 3px #0000001a">
+  <div style="background:linear-gradient(90deg,#0969da,#218bff);color:#fff;
+              padding:12px 18px;font-size:15px;font-weight:700">
+    ✓&nbsp; NB_04 — stage binding complete
+  </div>
+  <div style="padding:14px 18px;font-size:13px;color:#24292f">
+    <div style="margin-bottom:4px"><span style="color:#57606a">Stage workspace</span>
+      &nbsp; <b>{CURRENT_WS_NAME}</b>
+      <span style="color:#8c959f;font-size:12px">({WORKSPACE_ID})</span></div>
+    <div><span style="color:#57606a">Active value set</span>
+      &nbsp; <b>{ACTIVE_SET or '(unchanged)'}</b></div>
+    <table style="border-collapse:collapse;margin:12px 0;width:100%;font-size:13px">
+      <tr style="color:#57606a;text-align:left;border-bottom:2px solid #d0d7de">
+        <th style="{_cell}">Notebook</th><th style="{_cell}">Default LH</th>
+        <th style="{_cell}">Attached</th></tr>
+      {_rows}
+    </table>
+    <div style="padding:2px 0">• <b>DF_Gold_PA</b> &nbsp;→&nbsp; Silver_LH params {_df_txt}</div>
+    <div style="padding:2px 0">• <b>Gold_SM</b> &nbsp;→&nbsp; Gold_LH (Direct Lake on OneLake)</div>
+    <div style="margin-top:12px;padding:8px 12px;background:#ddf4ff;border-radius:6px;color:#0a3069">
+      <b>Next:</b> NB_01 → NB_02 → DF_Gold_PA → NB_03 now load THIS stage.</div>
+  </div>
+</div>
+"""))
