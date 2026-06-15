@@ -16,27 +16,14 @@
 # META           "id": "cee2ea93-ccb4-4bb3-8338-4a91840b9509"
 # META         },
 # META         {
-# META           "id": "06434335-fbfd-4d2b-879d-4962bdd8d605"
+# META           "id": "4207398e-6d15-4407-8d8d-cbb50d661ec6"
 # META         },
 # META         {
-# META           "id": "4207398e-6d15-4407-8d8d-cbb50d661ec6"
+# META           "id": "06434335-fbfd-4d2b-879d-4962bdd8d605"
 # META         }
 # META       ]
 # META     }
 # META   }
-# META }
-
-# CELL ********************
-
-# Fabric notebook source
-
-# METADATA ********************
-
-# META {
-# META   "kernel_info": {
-# META     "name": "synapse_pyspark"
-# META   },
-# META   "dependencies": {}
 # META }
 
 # CELL ********************
@@ -181,15 +168,6 @@ for tbl in ["production_daily", "cost_monthly", "schedule_summary", "field_kpi_f
     print(f"  Gold_LH.{tbl}: {n} rows")
 
 print("\n🏆 Gold aggregation COMPLETE — tables ready for Semantic Model")
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
-
 
 # METADATA ********************
 

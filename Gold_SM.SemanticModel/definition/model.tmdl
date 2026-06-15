@@ -10,7 +10,7 @@ annotation PBI_QueryOrder = ["DirectLake - Gold_LH"]
 
 annotation __PBI_TimeIntelligenceEnabled = 1
 
-annotation PBI_ProTooling = ["DirectLakeOnOneLakeInWeb","WebModelingEdit"]
+annotation PBI_ProTooling = ["DirectLakeOnOneLakeInWeb", "SLL_UpdateDLConnection_DLOL", "WebModelingEdit", "SLL"]
 
 ref table field_kpi_facts
 ref table schedule_summary
