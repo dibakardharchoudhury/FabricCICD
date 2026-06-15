@@ -2,7 +2,7 @@
   "name": "PL_Refresh_Master",
   "objectId": "00000000-0000-0000-0000-000000000001",
   "properties": {
-    "description": "Master orchestration pipeline — runs Bronze → Silver → Gold in sequence. Used in all three stages (Dev/Test/Prod). Environment parameter controls stage-specific behavior.",
+    "description": "Master orchestration pipeline — runs Bronze → Silver → Gold in sequence. Used in both stages (Dev/Prod). Environment parameter controls stage-specific behavior.",
     "activities": [
       {
         "name": "NB_Seed_Bronze",
@@ -102,7 +102,7 @@
       "Environment": {
         "type": "string",
         "defaultValue": "dev",
-        "description": "Target environment: dev | test | prod. Set by Deployment Rules per stage."
+        "description": "Target environment: dev | prod. Set by Deployment Rules per stage."
       },
       "WorkspaceId": {
         "type": "string",

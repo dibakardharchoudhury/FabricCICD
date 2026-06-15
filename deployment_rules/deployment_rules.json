@@ -10,7 +10,6 @@
       "description": "Sets the Environment parameter per stage",
       "stages": {
         "Development": { "Environment": "dev" },
-        "Test":        { "Environment": "test" },
         "Production":  { "Environment": "prod" }
       }
     },
@@ -21,7 +20,6 @@
       "description": "Sets the SemanticModelId per stage (PAB_Gold_SM GUID differs by workspace)",
       "stages": {
         "Development": { "SemanticModelId": "<DEV_PAB_GOLD_SM_GUID>" },
-        "Test":        { "SemanticModelId": "<TEST_PAB_GOLD_SM_GUID>" },
         "Production":  { "SemanticModelId": "<PROD_PAB_GOLD_SM_GUID>" }
       }
     },
@@ -34,10 +32,6 @@
         "Development": {
           "dataSourceType": "SharePoint",
           "connectionId":   "<DEV_SHAREPOINT_CONNECTION_ID>"
-        },
-        "Test": {
-          "dataSourceType": "SharePoint",
-          "connectionId":   "<TEST_SHAREPOINT_CONNECTION_ID>"
         },
         "Production": {
           "dataSourceType": "SharePoint",
@@ -53,22 +47,18 @@
       "stages": {
         "Development": {
           "dataSourceType": "Lakehouse",
-          "connectionPath": "PAB-Dev/Gold_LH"
-        },
-        "Test": {
-          "dataSourceType": "Lakehouse",
-          "connectionPath": "PAB-Test/Gold_LH"
+          "connectionPath": "ws-CICD-Dev/Gold_LH"
         },
         "Production": {
           "dataSourceType": "Lakehouse",
-          "connectionPath": "PAB-Prod/Gold_LH"
+          "connectionPath": "ws-CICD-Prod/Gold_LH"
         }
       }
     }
   ],
   "_howto": [
     "1. Open PAB_DeployPipeline in Fabric portal",
-    "2. Click ⚙️ Deployment Rules on the Dev→Test or Test→Prod stage boundary",
+    "2. Click ⚙️ Deployment Rules on the Dev→Prod stage boundary",
     "3. For each rule above: select the item → choose rule type → fill in values per stage",
     "4. Rules are applied automatically every time you deploy between stages",
     "5. Rules for DataflowGen2 and SemanticModel require the Connection ID from Fabric Admin Portal → Connections"

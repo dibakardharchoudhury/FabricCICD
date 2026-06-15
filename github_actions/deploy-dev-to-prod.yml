@@ -1,20 +1,26 @@
-# GitHub Actions: deploy-dev-to-test.yml
-# Trigger: Push / merge to 'develop' branch
-# Action: Deploy PAB-Dev → PAB-Test via Fabric Deployment Pipelines REST API
+# GitHub Actions: deploy-dev-to-prod.yml
+# Trigger: Merge to 'main' branch, or manual dispatch
+# Action: Deploy ws-CICD-Dev → ws-CICD-Prod via Fabric Deployment Pipelines REST API
 # ─────────────────────────────────────────────────────────────────────────────
+# This is a 2-stage deployment pipeline (Development → Production). The Fabric
+# Deployment Pipeline has stage order 0 = Development, 1 = Production.
+#
 # Required GitHub Secrets:
 #   FABRIC_TENANT_ID       — Azure AD tenant ID
 #   FABRIC_CLIENT_ID       — Service Principal (App Registration) client ID
 #   FABRIC_CLIENT_SECRET   — Service Principal secret
 #   FABRIC_PIPELINE_ID     — Fabric Deployment Pipeline ID (GUID)
+#
+# Note: Configure a GitHub Environment "production" with required reviewers so the
+# promotion to Prod is gated by an explicit approval before it runs.
 # ─────────────────────────────────────────────────────────────────────────────
 
-name: "Fabric CI — Deploy Dev to Test"
+name: "Fabric CD — Deploy Dev to Prod"
 
 on:
   push:
     branches:
-      - develop
+      - main
     paths:
       - 'fabric/**'   # Only trigger when Fabric item files change
 
@@ -26,10 +32,10 @@ on:
         default: "Manual deployment from GitHub Actions"
 
 jobs:
-  deploy-to-test:
-    name: "Deploy Dev → Test"
+  deploy-to-prod:
+    name: "Deploy Dev → Prod"
     runs-on: ubuntu-latest
-    environment: test    # Uses GitHub Environment protection rules
+    environment: production   # GitHub Environment — requires reviewer approval
 
     steps:
       # ── Step 1: Checkout code ─────────────────────────────────────────────
@@ -64,8 +70,8 @@ jobs:
           echo "token=$ACCESS_TOKEN" >> $GITHUB_OUTPUT
           echo "✅ Token acquired"
 
-      # ── Step 3: Trigger Deployment Dev → Test ────────────────────────────
-      - name: Deploy Dev → Test
+      # ── Step 3: Trigger Deployment Dev → Prod ────────────────────────────
+      - name: Deploy Dev → Prod
         id: deploy
         env:
           PIPELINE_ID: ${{ secrets.FABRIC_PIPELINE_ID }}
@@ -118,7 +124,7 @@ jobs:
             exit 0
           fi
 
-          MAX_ATTEMPTS=20
+          MAX_ATTEMPTS=30
           SLEEP_SECONDS=15
           ATTEMPT=0
 
@@ -134,7 +140,7 @@ jobs:
             echo "Status: ${STATUS}"
 
             if [ "$STATUS" == "Succeeded" ]; then
-              echo "✅ Deployment to TEST completed successfully"
+              echo "✅ Deployment to PROD completed successfully"
               exit 0
             elif [ "$STATUS" == "Failed" ] || [ "$STATUS" == "Cancelled" ]; then
               echo "❌ Deployment failed with status: ${STATUS}"
@@ -152,11 +158,11 @@ jobs:
       - name: Deployment Summary
         if: success()
         run: |
-          echo "## ✅ Fabric Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚀 Fabric Production Deployment Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Stage | Dev → Test |" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Dev → Prod |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Triggered by | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY

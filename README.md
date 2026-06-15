@@ -19,9 +19,9 @@ Sources (PIMS / Alpha / SharePoint)
    PAB_Dashboard (Power BI Report)
           ↓
 🚀 CI/CD
-   GitHub (develop branch) ← PAB-Dev workspace
-   Deployment Pipeline: PAB-Dev → PAB-Test → PAB-Prod
-   GitHub Actions: auto-deploy on push to develop
+   GitHub (develop branch) ← ws-CICD-Dev workspace
+   Deployment Pipeline: ws-CICD-Dev → ws-CICD-Prod
+   GitHub Actions: deploy on merge to main
 ```
 
 ## Files
@@ -53,8 +53,7 @@ fabric-cicd-demo/
 │   └── definition.pbism            — Fabric semantic model settings
 │
 ├── github_actions/
-│   ├── deploy-dev-to-test.yml      — Auto-deploy on push to develop branch
-│   └── deploy-test-to-prod.yml     — Manual production deployment with approval
+│   └── deploy-dev-to-prod.yml      — Promote Dev → Prod (reviewer-approved)
 │
 └── deployment_rules/
     └── deployment_rules.json       — Deployment rules reference (configure in UI)
@@ -68,7 +67,7 @@ makes every step below clear:
 | # | Name | Lives in | What it does | When you run it |
 |---|------|----------|--------------|-----------------|
 | 1 | **Data pipelines** | `pipelines/*.json` | Fabric Data Factory pipelines that move/transform *data* inside a workspace | During the data build / refresh (Steps 5 & 10) |
-| 2 | **Fabric Deployment Pipeline** | Fabric portal → Deployment pipelines | Promotes *items* (lakehouses, notebooks, pipelines, semantic model) across **Dev → Test → Prod** workspaces | During CI/CD setup (Step 8) and each promotion |
+| 2 | **Fabric Deployment Pipeline** | Fabric portal → Deployment pipelines | Promotes *items* (lakehouses, notebooks, pipelines, semantic model) across **Dev → Prod** workspaces | During CI/CD setup (Step 8) and each promotion |
 | 3 | **GitHub Actions “pipelines”** | `github_actions/*.yml` | CI/CD automation that triggers the Fabric Deployment Pipeline on push/merge | Automatically on git push (Steps 9 & 11) |
 
 ### The two data pipelines (#1 above)
@@ -77,7 +76,7 @@ makes every step below clear:
   with each step gated on the previous one succeeding. **Run this for a one-click full
   refresh** — especially after a deployment, because lakehouse deploys carry structure
   but no data. It is parameterized by `Environment` / `WorkspaceId` / `SemanticModelId`
-  so the *same* pipeline works in Dev, Test, and Prod.
+  so the *same* pipeline works in Dev and Prod.
 - **`PL_Copy_Bronze_Ingest`** — *ingestion.* A Copy Activity pipeline that loads the raw
   CSVs from OneLake Files into the Bronze Delta tables (with column mappings and an
   incremental watermark). It is the “real-world ingestion” alternative to
@@ -96,12 +95,14 @@ makes every step below clear:
 
 ### Step 1 — Prerequisites
 - Fabric capacity (F2+) provisioned and assigned to your workspace
-- A Fabric workspace (this demo uses **`ws-CICD-DevTest`** — substitute your own name)
+- Two Fabric workspaces (this demo uses **`ws-CICD-Dev`** and **`ws-CICD-Prod`** —
+  substitute your own names). Build everything in `ws-CICD-Dev`; `ws-CICD-Prod` is the
+  promotion target
 - For the CI/CD half: a GitHub repo with `develop` and `main` branches, and the
   Fabric admin switches **Git integration** and **GitHub integration** enabled
 
 ### Step 2 — Create the three lakehouses
-In your workspace (`ws-CICD-DevTest`), create three lakehouses with these **exact** names:
+In your dev workspace (`ws-CICD-Dev`), create three lakehouses with these **exact** names:
 - `Bronze_LH`
 - `Silver_LH`
 - `Gold_LH`
@@ -120,7 +121,7 @@ Fabric notebooks reference attached lakehouses by **runtime object GUID**, and t
 GUIDs are unique to each workspace and change whenever a workspace/lakehouse is
 recreated. They are therefore **not** committed to Git — the notebooks ship with an
 empty `"dependencies": {}` block. You must attach the lakehouses **once per workspace**
-after every Git sync / deployment (Dev, Test, Prod):
+after every Git sync / deployment (Dev, Prod):
 
 Open each notebook (`NB_01`, `NB_02`, `NB_03`) and in the **Explorer → Lakehouses**
 pane add **all three** lakehouses (`Bronze_LH`, `Silver_LH`, `Gold_LH`), then set
@@ -158,10 +159,11 @@ branch, and folder, then connect.
 In the workspace: **Source control** icon → select all items → add a commit message → **Commit**
 
 ### Step 8 — Create Deployment Pipeline
-In the Fabric portal: **Workspaces → Deployment pipelines → New pipeline**. Create three
-stages (Development → Test → Production) and assign the matching workspace to each. This
-**Fabric Deployment Pipeline** (pipeline type #2) promotes items across Dev → Test → Prod.
-Note the pipeline ID — add it to GitHub secrets as `FABRIC_PIPELINE_ID`.
+In the Fabric portal: **Workspaces → Deployment pipelines → New pipeline**. Create two
+stages (Development → Production) and assign `ws-CICD-Dev` to Development and
+`ws-CICD-Prod` to Production. This **Fabric Deployment Pipeline** (pipeline type #2)
+promotes items across Dev → Prod. Note the pipeline ID — add it to GitHub secrets as
+`FABRIC_PIPELINE_ID`.
 
 ### Step 9 — Configure GitHub Actions
 Add these secrets to your GitHub repository:
@@ -174,7 +176,7 @@ Copy `github_actions/*.yml` to `.github/workflows/` in your repo.
 
 ### Step 10 — Refresh data after deployment
 Lakehouse deployments copy **structure only, not data**. After the pipeline deploys
-to Test/Prod:
+to Prod:
 1. **Attach the lakehouses** in the target workspace — open `NB_01` / `NB_02` / `NB_03`
    and add all three lakehouses (see Step 4). Deployed notebooks arrive with an empty
    `dependencies` block, so they need their lakehouses re-attached in that workspace
@@ -182,16 +184,16 @@ to Test/Prod:
 2. **Repopulate** the target workspace by either:
    - running the notebooks `NB_01` → `NB_02` → `NB_03` in that workspace, **or**
    - running the **`PL_Refresh_Master`** data pipeline once (does all three + semantic
-     model refresh in one click — the recommended option for Test/Prod).
+     model refresh in one click — the recommended option for Prod).
 
 ### Step 11 — Demo the CI/CD Loop
-1. Open `NB_02_Transform_Silver` in your dev workspace
+1. Open `NB_02_Transform_Silver` in your dev workspace (`ws-CICD-Dev`)
 2. Uncomment the `gor_ratio` line (Gas-to-Oil Ratio KPI)
 3. Run the notebook — verify the new column appears
 4. Source Control → Commit: `feat: add gas-to-oil ratio KPI`
 5. GitHub: open PR from develop → main → review the diff → merge
-6. GitHub Actions triggers automatically → deploys to Test
-7. For production: manually trigger `deploy-test-to-prod.yml`
+6. GitHub Actions runs `deploy-dev-to-prod.yml` → waits for reviewer approval on the
+   `production` environment, then promotes Dev → Prod
 
 ## Key Limitations to Know
 

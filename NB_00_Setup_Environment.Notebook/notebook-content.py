@@ -13,7 +13,7 @@
 
 # ## ⚠️ One-time setup per workspace — attach the lakehouses
 # 
-# After syncing from Git into a workspace (Dev / Test / Prod), open **NB_01**, **NB_02**
+# After syncing from Git into a workspace (Dev / Prod), open **NB_01**, **NB_02**
 # and **NB_03** and in the **Explorer → Lakehouses** pane add **all three** lakehouses
 # (`Bronze_LH`, `Silver_LH`, `Gold_LH`), then set one as the default. The notebooks ship
 # with an empty `"dependencies": {}` block because attached-lakehouse GUIDs are
@@ -37,11 +37,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Cell 1 — Parameters (edit these for your environment)
-WORKSPACE_NAME = "ws-CICD-DevTest"   # Your Fabric workspace name
+WORKSPACE_NAME = "ws-CICD-Dev"       # Your Fabric workspace name
 BRONZE_LH      = "Bronze_LH"        # Bronze Lakehouse name
 SILVER_LH      = "Silver_LH"        # Silver Lakehouse name
 GOLD_LH        = "Gold_LH"          # Gold Lakehouse name
-ENVIRONMENT    = "dev"               # dev | test | prod — set via pipeline parameter
+ENVIRONMENT    = "dev"               # dev | prod — set via pipeline parameter
 
 print(f"Environment: {ENVIRONMENT}")
 print(f"Workspace:   {WORKSPACE_NAME}")
