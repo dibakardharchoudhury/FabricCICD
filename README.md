@@ -174,10 +174,7 @@ Bring them into the workspace one of two ways:
   matching `pipelines/*.zip`, then **map the connections** to your workspace's
   Lakehouses (the demo references them by name) and confirm.
 
-> 📌 The `.zip` files are generated from the `.json` by
-> [`scripts/04_build_pipeline_templates.ps1`](scripts/04_build_pipeline_templates.ps1)
-> (re-run it with `pwsh ./scripts/04_build_pipeline_templates.ps1` whenever you edit a
-> pipeline `.json`). Each `.zip` wraps the pipeline in Fabric's Git-item layout
+> 📌 The `.zip` files wrap each pipeline in Fabric's Git-item layout
 > (`pipeline-content.json` + `.platform`). If your tenant's **Import** dialog rejects a
 > hand-built `.zip`, fall back to **Git integration (Step 10)** — that path always works
 > for these exact definitions.
