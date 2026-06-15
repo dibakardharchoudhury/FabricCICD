@@ -5,6 +5,24 @@
 # META {
 # META   "kernel_info": {
 # META     "name": "synapse_pyspark"
+# META   },
+# META   "dependencies": {
+# META     "lakehouse": {
+# META       "default_lakehouse": "fd49e2e8-3e64-4e59-9556-2ea23468552a",
+# META       "default_lakehouse_name": "Bronze_LH",
+# META       "default_lakehouse_workspace_id": "292e18c3-b95e-42d1-bb02-9a2064fee5b8",
+# META       "known_lakehouses": [
+# META         {
+# META           "id": "fd49e2e8-3e64-4e59-9556-2ea23468552a"
+# META         },
+# META         {
+# META           "id": "4e39b97a-c57e-4ca2-8615-fa2b93682001"
+# META         },
+# META         {
+# META           "id": "d2ca2ea6-4043-4e94-9984-aa1c29742578"
+# META         }
+# META       ]
+# META     }
 # META   }
 # META }
 
@@ -13,7 +31,12 @@
 # Fabric Notebook: NB_01_Seed_Bronze
 # Purpose: Create Bronze Delta tables from inline sample data (no external source needed)
 # Layer: Bronze — raw, source-oriented ingestion
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────
+# ⚠️ Set Bronze_LH as the DEFAULT lakehouse for this notebook (Lakehouses pane →
+#    pin Bronze_LH as default). Tables are written with single-part names so they
+#    land in the default lakehouse — this avoids the schema-enabled lakehouse parsing
+#    a two-part name like "Bronze_LH.production_raw" as schema.table ([SCHEMA_NOT_FOUND]).
+# ──────────────────────────────────────────────────────────────────────────
 
 # Cell 1 — Imports & Spark session
 from pyspark.sql import SparkSession
@@ -159,6 +182,7 @@ print("\n" + "="*60)
 print("🏆 Bronze seeding COMPLETE")
 print("Tables created: production_raw, cost_raw, schedule_raw")
 print("Next: Run NB_02_Transform_Silver")
+
 
 # METADATA ********************
 
