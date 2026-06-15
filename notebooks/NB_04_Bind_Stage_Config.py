@@ -33,6 +33,8 @@
 # Prereqs: the running identity is a workspace Member/Admin and owns Gold_SM. The Variable
 #   Library is created here on first run; the deployment pipeline activates the matching
 #   value set per stage so consumers resolve the right IDs automatically.
+# Library: this notebook needs 'semantic-link-labs'. Cell 2 %pip-installs it for a quick demo,
+#   but for production attach a Fabric ENVIRONMENT with the library pre-installed (see Cell 2).
 # -----------------------------------------------------------------------------------
 
 # Cell 1 — PARAMETERS (tag this cell as "parameters" in the Fabric notebook).
@@ -48,6 +50,12 @@ silver_lakehouse_name = "Silver_LH"
 gold_lakehouse_name   = "Gold_LH"
 
 # Cell 2 — Imports
+# NOTE: %pip install runs on EVERY session start (slow cold start) and is per-session only.
+#   For production / scheduled pipeline runs, prefer a Fabric ENVIRONMENT instead: create a
+#   custom Environment with 'semantic-link-labs' in its Public Libraries, attach it to this
+#   notebook (or set it as the workspace default), and DELETE this %pip line. The library is
+#   then pre-installed on the Spark pool — faster, reproducible, and version-pinned.
+#   See: https://learn.microsoft.com/fabric/data-engineering/environment-manage-library
 %pip install -q semantic-link-labs
 import json, base64, re, requests
 import sempy_labs as labs
