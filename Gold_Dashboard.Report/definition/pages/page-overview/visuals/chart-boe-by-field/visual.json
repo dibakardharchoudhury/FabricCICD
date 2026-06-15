@@ -1,0 +1,78 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/1.5.0/schema.json",
+  "name": "chart-boe-by-field",
+  "position": {
+    "x": 16,
+    "y": 144,
+    "z": 3,
+    "width": 620,
+    "height": 280,
+    "tabOrder": 3
+  },
+  "visual": {
+    "visualType": "clusteredColumnChart",
+    "query": {
+      "queryState": {
+        "Category": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "production_daily"
+                    }
+                  },
+                  "Property": "field"
+                }
+              },
+              "queryRef": "production_daily.field",
+              "nativeQueryRef": "field"
+            }
+          ]
+        },
+        "Y": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "production_daily"
+                    }
+                  },
+                  "Property": "Total BOE"
+                }
+              },
+              "queryRef": "production_daily.Total BOE",
+              "nativeQueryRef": "Total BOE"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Total BOE by Field'"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

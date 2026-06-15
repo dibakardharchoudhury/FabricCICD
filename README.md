@@ -23,6 +23,7 @@ CI/CD:  GitHub (main) ─► GitHub Actions ─► Fabric Deployment Pipeline (w
 | `*_LH.Lakehouse/` | Fabric Git lakehouse items (Bronze / Silver / Gold) |
 | `dataflows/DF_Gold_PA.{pqt,m}` | Gold `production_daily` Dataflow Gen2 — `.pqt` template + `.m` source |
 | `pipelines/PL_Refresh_Master.zip` | End-to-end orchestration — one-click **import template** (a verified Fabric export) |
+| `Gold_Dashboard.Report/` | Prebuilt **PBIR** report (3 KPI cards + 3 charts) bound to `Gold_SM` by relative path — no manual visual authoring |
 | `deployment_rules/deployment_rules.json` | Reference for the per-stage Deployment Rules |
 | `github_actions/deploy-dev-to-prod.yml` | CD workflow: promotes Dev → Prod via the Fabric REST API |
 | `sample_data/*.csv` | Seed data for the Bronze layer |
@@ -107,7 +108,12 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
 
 > ⚠️ **`production_daily` missing from the table picker?** Tables written by **Dataflow Gen2** (`production_daily`) appear in the SQL analytics endpoint / OneLake picker **after a metadata sync**, while Spark/notebook tables show immediately. If the New-semantic-model dialog lists only `cost_monthly` / `schedule_summary` / `field_kpi_facts`: open **`Gold_LH` → SQL analytics endpoint**, click **Refresh** (or the ⟳ icon in the table picker), wait a few seconds, and re-open the dialog — this is only the live picker lagging.
 
-**9. Build the report `Gold_Dashboard`** — New → Report → live-connect to `Gold_SM` (DirectLake, never Import). Add cards for `Total BOE` / `Total Cost (USD)`, a line chart by `DateDim[Date]`, and a column chart by `field`. Save as `Gold_Dashboard`.
+**9. Get the report `Gold_Dashboard`** — the prebuilt **`Gold_Dashboard.Report/`** folder in this repo is a ready-to-use [PBIR](https://learn.microsoft.com/power-bi/developer/projects/projects-report) report, so you don't author visuals by hand. It binds to the semantic model by the relative path `../Gold_SM.SemanticModel`, so it rebinds to whichever `Gold_SM` lives in the same workspace. Two ways to use it:
+
+  - **Via Git (matches this demo):** once `Gold_SM` exists in the workspace and is committed (Steps 8 + 10), Source control → **Update** brings `Gold_Dashboard` in alongside it, already wired to `Gold_SM`. No connection step.
+  - **Via Power BI Desktop:** open `Gold_Dashboard.Report/definition.pbir` (requires the PBIR preview feature). Desktop opens the report and the sibling `Gold_SM.SemanticModel` together.
+
+  The page **Production Analysis** ships with: cards for `Total BOE`, `Total Cost (USD)`, `BOE Last Day`; a **Total BOE by Field** column chart; a **Total BOE over Time** line chart (`DateDim[Date]`); and a **Cost by Field and Type** clustered column chart (`cost_type` series). The field/measure names must match Step 8 exactly — if you rename a measure, update the matching `visual.json`.
 
 ---
 
