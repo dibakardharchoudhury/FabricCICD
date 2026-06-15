@@ -1,3 +1,4 @@
 dependencies:
   - pip:
+      - fabric-cicd==1.1.0
       - semantic-link-labs==0.15.1
