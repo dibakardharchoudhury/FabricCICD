@@ -1,4 +1,4 @@
-# Microsoft Fabric CI/CD Demo — PAB Medallion Architecture
+# Microsoft Fabric CI/CD Demo — Medallion Architecture
 
 End-to-end CI/CD demonstration with Medallion Lakehouse, GitHub integration, and Fabric Deployment Pipelines.
 
@@ -15,8 +15,8 @@ Sources (PIMS / Alpha / SharePoint)
           ↓
 🥇 GOLD LAYER (report-oriented)
    Gold_LH    ← NB_03_Aggregate_Gold + DF_Gold_PA/Cost/Schedule
-   PAB_Gold_SM (Semantic Model, DirectLake)
-   PAB_Dashboard (Power BI Report)
+   Gold_SM (Semantic Model, DirectLake)
+   Gold_Dashboard (Power BI Report)
           ↓
 🚀 CI/CD
    GitHub (develop branch) ← ws-CICD-Dev workspace
@@ -49,7 +49,7 @@ fabric-cicd-demo/
 │   └── DF_Gold_PA.m                — Power Query M: Silver → Gold aggregation
 │
 ├── semantic_model/
-│   ├── PAB_Gold_SM.bim             — TMSL model definition (4 tables, 15+ measures)
+│   ├── Gold_SM.bim               — TMSL model definition (4 tables, 15+ measures)
 │   └── definition.pbism            — Fabric semantic model settings
 │
 ├── github_actions/
@@ -72,7 +72,7 @@ makes every step below clear:
 
 ### The two data pipelines (#1 above)
 - **`PL_Refresh_Master`** — *orchestration.* Runs the whole Medallion build in order:
-  `NB_01_Seed_Bronze → NB_02_Transform_Silver → NB_03_Aggregate_Gold → Refresh PAB_Gold_SM`,
+  `NB_01_Seed_Bronze → NB_02_Transform_Silver → NB_03_Aggregate_Gold → Refresh Gold_SM`,
   with each step gated on the previous one succeeding. **Run this for a one-click full
   refresh** — especially after a deployment, because lakehouse deploys carry structure
   but no data. It is parameterized by `Environment` / `WorkspaceId` / `SemanticModelId`

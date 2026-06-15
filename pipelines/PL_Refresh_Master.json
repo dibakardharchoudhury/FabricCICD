@@ -112,7 +112,7 @@
       "SemanticModelId": {
         "type": "string",
         "defaultValue": "",
-        "description": "PAB_Gold_SM semantic model ID — set via Deployment Rules per stage."
+        "description": "Gold_SM semantic model ID — set via Deployment Rules per stage."
       }
     },
     "annotations": [

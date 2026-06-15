@@ -1,5 +1,5 @@
 {
-  "name": "PAB_Gold_SM",
+  "name": "Gold_SM",
   "compatibilityLevel": 1604,
   "model": {
     "culture": "en-US",
@@ -253,7 +253,7 @@
     "annotations": [
       { "name": "PBIDesktopVersion", "value": "2.130.0.0" },
       { "name": "TabularEditor_SerializeOptions_IgnoreInferredObjects", "value": "true" },
-      { "name": "CICDDemo", "value": "PAB_Gold_SM_v1.0" }
+      { "name": "CICDDemo", "value": "Gold_SM_v1.0" }
     ]
   }
 }

@@ -1,7 +1,7 @@
 {
-  "_comment": "Deployment Rules for PAB_DeployPipeline — configure these in Fabric UI: Pipeline → ⚙️ Deployment Rules",
+  "_comment": "Deployment Rules for DeployPipeline — configure these in Fabric UI: Pipeline → ⚙️ Deployment Rules",
   "_docs": "https://learn.microsoft.com/en-us/fabric/cicd/deployment-pipelines/create-rules",
-  "pipeline": "PAB_DeployPipeline",
+  "pipeline": "DeployPipeline",
   "rules": [
     {
       "item": "PL_Refresh_Master",
@@ -17,10 +17,10 @@
       "item": "PL_Refresh_Master",
       "type": "DataPipeline",
       "rule": "PipelineParameter",
-      "description": "Sets the SemanticModelId per stage (PAB_Gold_SM GUID differs by workspace)",
+      "description": "Sets the SemanticModelId per stage (Gold_SM GUID differs by workspace)",
       "stages": {
-        "Development": { "SemanticModelId": "<DEV_PAB_GOLD_SM_GUID>" },
-        "Production":  { "SemanticModelId": "<PROD_PAB_GOLD_SM_GUID>" }
+        "Development": { "SemanticModelId": "<DEV_GOLD_SM_GUID>" },
+        "Production":  { "SemanticModelId": "<PROD_GOLD_SM_GUID>" }
       }
     },
     {
@@ -40,7 +40,7 @@
       }
     },
     {
-      "item": "PAB_Gold_SM",
+      "item": "Gold_SM",
       "type": "SemanticModel",
       "rule": "DataSourceRule",
       "description": "Binds semantic model to the stage-appropriate Gold_LH SQL endpoint",
@@ -57,7 +57,7 @@
     }
   ],
   "_howto": [
-    "1. Open PAB_DeployPipeline in Fabric portal",
+    "1. Open DeployPipeline in Fabric portal",
     "2. Click ⚙️ Deployment Rules on the Dev→Prod stage boundary",
     "3. For each rule above: select the item → choose rule type → fill in values per stage",
     "4. Rules are applied automatically every time you deploy between stages",
