@@ -122,7 +122,7 @@ Deploy **all items in one pass** so the pipeline pairs them by name and rewrites
 
 | Item | Promotes via | Rebinds to Prod by | Rule? |
 | --- | --- | --- | --- |
-| 3 Lakehouses | Deployment Pipeline | Paired by name (structure only — **reload data**, Step 13) | — |
+| 3 Lakehouses | Deployment Pipeline | Paired by name — arrives **empty (no tables, no data)**; notebooks recreate tables on run (Step 13) | — |
 | 4 Notebooks | Deployment Pipeline | **Default-lakehouse rule** → Prod LH (code also uses name-based three-part names) | ✅ rule |
 | Data pipeline `PL_Refresh_Master` | Deployment Pipeline | Activity GUIDs **auto-paired/rewritten** | — |
 | Dataflow `DF_Gold_PA` | Deployment Pipeline | **Parameter rule** → Prod `Silver_LH` IDs | ✅ rule |
@@ -155,11 +155,13 @@ Deploy **all items in one pass** so the pipeline pairs them by name and rewrites
 
   *Option 2 (Variable Library):* instead of the notebook + dataflow rules, point those items at `VL_CICD_Bindings` and set the active value set per stage; keep only the `Gold_SM` data-source rule.
 
-**13. Deploy again, reload data & verify** — click **Deploy** once more so the rules apply and the Prod items repoint to Prod sources. Lakehouse deploys carry **structure only, no data**, so then:
+**13. Deploy again, reload data & verify** — click **Deploy** once more so the rules apply and the Prod items repoint to Prod sources. The Prod lakehouses arrive **completely empty** (see callout), so then:
 1. **Pairing** — every item shows the chain-link (paired) icon; none "only in source"; no duplicate same-name items.
-2. **Load** — run `PL_Refresh_Master` once in Prod (`NB_Setup → NB_01 → NB_02 → DF_Gold_PA → NB_03`).
+2. **Load** — run `PL_Refresh_Master` once in Prod (`NB_Setup → NB_01 → NB_02 → DF_Gold_PA → NB_03`). This **creates the tables and loads the data** in one pass.
 3. **Semantic model** — `Gold_SM` lineage points at **Prod** `Gold_LH`; refresh; `Total BOE` / `Total Cost (USD)` return values.
 4. **Report** — open `Gold_Dashboard` in Prod; it's bound to the Prod `Gold_SM` and renders Prod data.
+
+> **Why is the Prod lakehouse empty — wasn't the table schema in Git?** No. Fabric Git serializes only the lakehouse **container** (`.platform` metadata + `shortcuts.metadata.json`); **Delta tables and their schemas are never committed** — tables are data in OneLake (schema lives in each table's `_delta_log`), and Git tracks source, not data. The deployment pipeline copies the empty lakehouse object the same way. So the **tables don't exist in Prod until the notebooks create them** — `NB_01`→Bronze, `NB_02`→Silver, `NB_03`/`DF_Gold_PA`→Gold. Running `PL_Refresh_Master` (13.2) creates the schema **and** populates it in a single run.
 
 ### Part C2 — Automate the promotion
 
@@ -176,7 +178,8 @@ Deploy **all items in one pass** so the pipeline pairs them by name and rewrites
 | Area | Limitation | Mitigation |
 | --- | --- | --- |
 | Git | Sensitivity labels block commits; 50 MB/commit; Admin-only connect; no MyWorkspace | Remove labels; batch commits; pre-configure; use named workspaces |
-| Deploy | Lakehouse copies structure, not data | Run `PL_Refresh_Master` after each deploy |
+| Git | Lakehouse Git/deploy carries only the **container** — **table schemas & data are never serialized** | Notebooks recreate tables on run; run `PL_Refresh_Master` in Prod (Step 13) |
+| Deploy | Lakehouse arrives **empty** — no tables, no data | Run `PL_Refresh_Master` after each deploy (creates schema + loads data) |
 | Deploy | Items added after assignment don't auto-pair; same-name unpaired items duplicate | Build all items first; verify pairing before deploying |
 | Deploy | DirectLake semantic models don't auto-bind | Data-source rule → Prod `Gold_LH` (Step 12) |
 | Deploy | Dataflow Gen2 doesn't auto-bind | Parameter rule → Prod `Silver_LH` (Step 12) |
