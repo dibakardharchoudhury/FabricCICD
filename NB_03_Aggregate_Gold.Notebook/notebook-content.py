@@ -1,5 +1,30 @@
 # Fabric notebook source
 
+# METADATA ********************
+
+# META {
+# META   "kernel_info": {
+# META     "name": "synapse_pyspark"
+# META   },
+# META   "dependencies": {
+# META     "lakehouse": {
+# META       "default_lakehouse": "d2ca2ea6-4043-4e94-9984-aa1c29742578",
+# META       "default_lakehouse_name": "Gold_LH",
+# META       "default_lakehouse_workspace_id": "292e18c3-b95e-42d1-bb02-9a2064fee5b8",
+# META       "known_lakehouses": [
+# META         {
+# META           "id": "d2ca2ea6-4043-4e94-9984-aa1c29742578"
+# META         },
+# META         {
+# META           "id": "fd49e2e8-3e64-4e59-9556-2ea23468552a"
+# META         },
+# META         {
+# META           "id": "4e39b97a-c57e-4ca2-8615-fa2b93682001"
+# META         }
+# META       ]
+# META     }
+# META   }
+# META }
 
 # CELL ********************
 
@@ -143,3 +168,10 @@ for tbl in ["production_daily", "cost_monthly", "schedule_summary", "field_kpi_f
     print(f"  Gold_LH.{tbl}: {n} rows")
 
 print("\n🏆 Gold aggregation COMPLETE — tables ready for Semantic Model")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
