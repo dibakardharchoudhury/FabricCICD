@@ -1,5 +1,5 @@
 {
-  "_comment": "Reference for the Fabric Variable Library 'VL_CICD_Bindings'. Create it in the Fabric portal (Create -> Data Factory -> Variable library), add these variables, then add a value set per stage. The deployment pipeline activates the matching value set per stage (one-time 'Set as active' on each stage), so consumers resolve the correct IDs automatically — no orphaned GUIDs.",
+  "_comment": "OPTIONAL (Option 2). Reference for the Fabric Variable Library 'VL_CICD_Bindings'. The simplest path is deployment rules only (deployment_rules/deployment_rules.json). Use this Variable Library instead of the notebook + dataflow rules when you want IDs resolved at runtime per stage (config-as-code). Create it in the Fabric portal (Create -> Data Factory -> Variable library), add these variables, then add a value set per stage. The deployment pipeline activates the matching value set per stage (one-time 'Set as active' on each stage), so consumers resolve the correct IDs automatically.",
   "_docs": "https://learn.microsoft.com/en-us/fabric/cicd/variable-library/variable-library-overview",
   "library": "VL_CICD_Bindings",
   "_consumers": "Notebooks (notebookutils.variableLibrary), Dataflow Gen2 (parameter binding), Data pipeline. NOT consumable by the DirectLake semantic model or PBIR report — those use a deployment data-source rule and Git respectively.",
@@ -32,6 +32,6 @@
   },
   "_stillNeedsDeploymentRuleOrGit": {
     "Gold_SM": "DirectLake semantic model is not a variable-library consumer — keep the Data source deployment rule -> ws-CICD-Prod/Gold_LH (see deployment_rules.json).",
-    "Gold_Dashboard": "PBIR report is not supported by deployment pipelines — deliver via Git (connect ws-CICD-Prod to the repo and Update)."
+    "Gold_Dashboard": "Report autobinds to the paired Prod Gold_SM through the deployment pipeline — no Variable Library, no rule, no Git step."
   }
 }

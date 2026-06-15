@@ -108,53 +108,32 @@ CI/CD:  GitHub (main) ─► GitHub Actions ─► Fabric Deployment Pipeline (w
 
   > "Create a Production Analysis page with cards for Total BOE, Total Cost (USD) and BOE Last Day; a column chart of Total BOE by field; a line chart of Total BOE over DateDim[Date]; and a clustered column chart of Total Cost (USD) by field broken out by cost_type."
 
-  Review, tweak, **Save as `Gold_Dashboard`**, then commit from Fabric (Step 10) so it serializes to `Gold_Dashboard.Report/` (PBIR). The report reaches Prod via **Git**, not the deployment pipeline (Step 12).
+  Review, tweak, **Save as `Gold_Dashboard`** in the workspace. It promotes through the deployment pipeline and **autobinds** to the paired Prod `Gold_SM` (Step 12) — no rule, no Git step. Commit it from Fabric (Step 10) for source control like every other item.
 
 ---
 
 ## Part C — CI/CD
 
-Promotion model: **Git** is source control into Dev; the **Deployment Pipeline** promotes Dev → Prod. Part C1 is the manual promotion; Part C2 automates it.
+Promotion model: **Git** is source control into Dev; the **Deployment Pipeline** promotes every item Dev → Prod. Part C1 is the manual promotion; Part C2 automates it.
 
 ### How each item reaches a fresh Prod workspace without orphaned bindings
 
-Deploy **all supported items in one pass** so the pipeline pairs them by name and rewrites internal references to the Prod copies. Per-type behavior:
+Deploy **all items in one pass** so the pipeline pairs them by name and rewrites internal references to the Prod copies. Only **three** bindings don't auto-rebind — each gets one deployment rule; everything else is automatic.
 
-| Item | Promotes via | Rebinds to Prod by | Action |
+| Item | Promotes via | Rebinds to Prod by | Rule? |
 | --- | --- | --- | --- |
-| 3 Lakehouses | Deployment Pipeline | Name pairing | Structure copies, **data does not** — reload (Step 13) |
-| 4 Notebooks | Deployment Pipeline | Code uses **three-part names** (name-based, no GUID) + default-lakehouse **auto-bind**; a **Default-lakehouse rule** makes it deterministic | Set the rule once (Step 12) |
-| Data pipeline `PL_Refresh_Master` | Deployment Pipeline | Activity GUIDs **auto-paired/rewritten** when all items deploy together | None |
-| Dataflow `DF_Gold_PA` | Deployment Pipeline | **No auto-bind** — but source/dest are parameterized, so a **Parameter rule** injects the Prod `Silver_LH` IDs | Set the rule once (Step 12) |
-| Semantic model `Gold_SM` (DirectLake) | Deployment Pipeline | **DirectLake does NOT auto-bind** — a **Data source rule** is **required** | Set the rule once (Step 12) |
-| Report `Gold_Dashboard` (PBIR) | **Git** — PBIR isn't supported by deployment pipelines | `byPath` reference to `Gold_SM`, resolved by name | Connect Prod to Git → **Update** (Step 13) |
+| 3 Lakehouses | Deployment Pipeline | Paired by name (structure only — **reload data**, Step 13) | — |
+| 4 Notebooks | Deployment Pipeline | **Default-lakehouse rule** → Prod LH (code also uses name-based three-part names) | ✅ rule |
+| Data pipeline `PL_Refresh_Master` | Deployment Pipeline | Activity GUIDs **auto-paired/rewritten** | — |
+| Dataflow `DF_Gold_PA` | Deployment Pipeline | **Parameter rule** → Prod `Silver_LH` IDs | ✅ rule |
+| Semantic model `Gold_SM` (DirectLake) | Deployment Pipeline | **Data source rule** → Prod `Gold_LH` (DirectLake never auto-binds) | ✅ rule |
+| Report `Gold_Dashboard` | Deployment Pipeline | **Autobinds** to the paired Prod `Gold_SM` | — |
 
-The three deployment rules are set **once on the Production stage** and re-apply on every deploy (manual or automated) — so no orphaned GUIDs or datasource names. `deployment_rules/deployment_rules.json` lists the exact values.
+### Binding options — simplest first
 
-### Binding strategy — rules vs. Variable Library vs. parameters
+**Option 1 — Deployment rules only (recommended).** Three rules on the Production stage cover everything that doesn't auto-bind (notebook default lakehouse, dataflow parameters, semantic-model data source). No extra items, no code changes. Set once; they re-apply on every deploy. This is Step 12. `deployment_rules/deployment_rules.json` lists the exact values.
 
-There are three mechanisms to make the Dev→Prod mapping correct. Pick per item by what each item type can consume:
-
-| Mechanism | Binds | Best for |
-| --- | --- | --- |
-| **Deployment rule** (portal, per stage) | Data source / parameters / default lakehouse on the **paired** item | The **semantic model** (only option — DirectLake isn't a Variable Library consumer) |
-| **Variable Library** (Fabric item, value set per stage) | IDs resolved **at runtime** from the stage's active value set; no GUID in code | **Notebooks, Dataflow Gen2, data pipeline** — the cleanest, code-as-config option |
-| **Native parameters** (`DF_Gold_PA` params) | Whatever a rule or Variable Library feeds them | The plumbing the above two write into |
-
-**Recommended (this repo):** a **Variable Library** (`VL_CICD_Bindings`) for the data-plane items, a **deployment rule** for the semantic model, and **Git** for the report:
-
-| Item | Mechanism | How it resolves in Prod |
-| --- | --- | --- |
-| 3 Lakehouses | Deployment Pipeline | Paired by name; structure copies, **data reloaded** (Step 13) |
-| 4 Notebooks | **Variable Library** | `notebookutils.variableLibrary.getLibrary('VL_CICD_Bindings')` returns the **Prod** workspace/lakehouse IDs from the active value set — no GUID baked in code, so no orphaned mapping. (Three-part names also resolve by name; the library removes even the manual default-lakehouse attach.) |
-| Data pipeline `PL_Refresh_Master` | Deployment Pipeline | Activity GUIDs **auto-paired/rewritten** when all items deploy together |
-| Dataflow `DF_Gold_PA` | **Variable Library** | `SilverWorkspaceId`/`SilverLakehouseId` params bound to the library variables (replaces the parameter deployment rule) |
-| Semantic model `Gold_SM` (DirectLake) | **Deployment rule** (required) | DirectLake isn't a Variable Library consumer — Data source rule → Prod `Gold_LH` |
-| Report `Gold_Dashboard` (PBIR) | **Git** | PBIR isn't pipeline-supported — `byPath` to `Gold_SM`, delivered via Git **Update** |
-
-Why this removes orphans: the Variable Library is itself deployed by the pipeline and **versioned in Git**; each stage has its own value set, and the deployment pipeline activates the right one per stage (one-time setting). Consumers read IDs at runtime, so nothing carries a Dev GUID into Prod. The only portal-side binding left is the one item that can't consume the library — the semantic model. See `variable_library/VL_CICD_Bindings.json` for the variables and Dev/Prod value sets.
-
-> If you skip the Variable Library, the **deployment-rules-only** path below (Step 12) is fully equivalent — it just sets the notebook default-lakehouse and dataflow parameters per stage as portal rules instead.
+**Option 2 — Variable Library + the semantic-model rule.** Move the notebook and dataflow IDs into a Variable Library (`VL_CICD_Bindings`) with a value set per stage, so they resolve **at runtime** with no GUID in code; keep the `Gold_SM` data-source rule (DirectLake can't consume a Variable Library). Choose this only when you want config-as-code or many items share the same IDs. See `variable_library/VL_CICD_Bindings.json`.
 
 ### Part C1 — Manual promotion
 
@@ -162,21 +141,26 @@ Why this removes orphans: the Variable Library is itself deployed by the pipelin
 
 **11. Create the Deployment Pipeline** — Deployment pipelines → New → two stages (**Development → Production**); assign `ws-CICD-Dev` to Development and empty `ws-CICD-Prod` to Production. Select **all** items in Development and **Deploy once** — separate batches don't auto-pair and create duplicates. Copy the **pipeline GUID** from the URL (needed for automation).
 
-**12. Bind Prod (Variable Library, recommended)** — create the Variable Library `VL_CICD_Bindings` (Create → Data Factory → Variable library) with a value set per stage holding that stage's workspace + lakehouse IDs (`variable_library/VL_CICD_Bindings.json`). On each stage, **Set as active** the matching value set. Point `DF_Gold_PA`'s params and the notebooks' lakehouse lookups at the library. The **only** portal rule still required is on the **Production** stage → **⚙️ Deployment rules** → **`Gold_SM` → Data source** → `ws-CICD-Prod/Gold_LH` (DirectLake never auto-binds).
+**12. Set the three Production-stage deployment rules** — on the **Production** stage click **⚙️ Deployment rules** and add:
+- **`NB_01`/`NB_02`/`NB_03` → Default lakehouse** → map each Dev lakehouse to its matching Prod lakehouse.
+- **`DF_Gold_PA` → Parameters** → `SilverWorkspaceId`/`SilverLakehouseId` = Prod `Silver_LH`.
+- **`Gold_SM` → Data source** → `ws-CICD-Prod/Gold_LH` (DirectLake never auto-binds).
 
-  *Rules-only alternative (no Variable Library):* on the Production stage set three deployment rules instead — `Gold_SM` → Data source → `ws-CICD-Prod/Gold_LH`; `DF_Gold_PA` → Parameters → Prod `Silver_LH` IDs; `NB_01`/`NB_02`/`NB_03` → Default lakehouse → matching Prod lakehouse. `PL_Refresh_Master`'s activity GUIDs need no rule — they auto-pair.
+  That's all. `PL_Refresh_Master`'s activity GUIDs auto-pair and the report autobinds to the paired Prod `Gold_SM` — neither needs a rule. Rules are portal-only (no REST API) and re-apply on every deploy.
 
-**13. Reload data, deliver the report & verify** — lakehouse deploys carry **structure only, no data**:
+  *Option 2 (Variable Library):* instead of the notebook + dataflow rules, point those items at `VL_CICD_Bindings` and set the active value set per stage; keep only the `Gold_SM` data-source rule.
+
+**13. Reload data & verify** — lakehouse deploys carry **structure only, no data**:
 1. **Pairing** — every item shows the chain-link (paired) icon; none "only in source"; no duplicate same-name items.
 2. **Load** — run `PL_Refresh_Master` once in Prod (`NB_Setup → NB_01 → NB_02 → DF_Gold_PA → NB_03`).
 3. **Semantic model** — `Gold_SM` lineage points at **Prod** `Gold_LH`; refresh; `Total BOE` / `Total Cost (USD)` return values.
-4. **Report** — connect `ws-CICD-Prod` to Git → **Update** to pull `Gold_Dashboard` (PBIR isn't in the pipeline); it binds to Prod `Gold_SM` by path and renders Prod data.
+4. **Report** — open `Gold_Dashboard` in Prod; it's bound to the Prod `Gold_SM` and renders Prod data.
 
 ### Part C2 — Automate the promotion
 
 **14. Service principal & secrets** — register an Entra app (client/tenant ID, secret); enable *"Service principals can use Fabric APIs"*; add it as Admin on both workspaces and the pipeline. GitHub secrets: `FABRIC_TENANT_ID`, `FABRIC_CLIENT_ID`, `FABRIC_CLIENT_SECRET`, `FABRIC_PIPELINE_ID` (the pipeline GUID from Step 11).
 
-**15. Add the workflow** — copy `github_actions/deploy-dev-to-prod.yml` to `.github/workflows/`. On push to `main` it acquires a Fabric token, calls `POST /v1/pipelines/{id}/deploy` (Dev→Prod), and gates on the GitHub `production` environment (add required reviewers). The active value set and the `Gold_SM` rule apply server-side, so the only post-deploy steps are the data reload (Step 13.2) and the report Git **Update** (Step 13.4).
+**15. Add the workflow** — copy `github_actions/deploy-dev-to-prod.yml` to `.github/workflows/`. On push to `main` it acquires a Fabric token, calls `POST /v1/pipelines/{id}/deploy` (Dev→Prod), and gates on the GitHub `production` environment (add required reviewers). The deployment rules apply server-side, so the only post-deploy step is the data reload (Step 13.2).
 
 **16. Demo the loop** — edit `NB_02` (e.g. uncomment the `gor_ratio` KPI) → run → Commit → PR to `main` → merge → Actions promotes Dev→Prod after reviewer approval.
 
@@ -189,9 +173,7 @@ Why this removes orphans: the Variable Library is itself deployed by the pipelin
 | Git | Sensitivity labels block commits; 50 MB/commit; Admin-only connect; no MyWorkspace | Remove labels; batch commits; pre-configure; use named workspaces |
 | Deploy | Lakehouse copies structure, not data | Run `PL_Refresh_Master` after each deploy |
 | Deploy | Items added after assignment don't auto-pair; same-name unpaired items duplicate | Build all items first; verify pairing before deploying |
-| Deploy | DirectLake semantic models don't auto-bind, and **can't consume a Variable Library** | Data-source rule → Prod `Gold_LH` (Step 12) |
-| Deploy | Dataflow Gen2 doesn't auto-bind | Variable Library value set (or parameter rule) → Prod `Silver_LH` (Step 12) |
-| Deploy | **PBIR reports aren't supported by deployment pipelines** | Deliver `Gold_Dashboard` to Prod via Git **Update** (Step 13.4) |
-| Notebook | Default-lakehouse GUID is workspace-specific | Read IDs from the Variable Library at runtime (or default-lakehouse rule); code uses three-part names |
-| Variable Library | `notebookutils.variableLibrary` reads only the **same workspace**; SPN not supported | Deploy the library into each workspace (the pipeline does this); set the active value set per stage |
+| Deploy | DirectLake semantic models don't auto-bind | Data-source rule → Prod `Gold_LH` (Step 12) |
+| Deploy | Dataflow Gen2 doesn't auto-bind | Parameter rule → Prod `Silver_LH` (Step 12) |
+| Notebook | Default-lakehouse GUID is workspace-specific | Default-lakehouse rule (Step 12); code also uses three-part names |
 | Semantic model | Needs Enhanced Metadata for pipelines | Fabric **New semantic model** already has it |

@@ -2,9 +2,9 @@
   "_comment": "Deployment Rules for DeployPipeline — configure in the Fabric portal: Pipeline → Production stage → Deployment rules gear. Rules can't be imported from a file; this is the reference for what to enter. They are set once and re-apply on every deploy (manual or GitHub Actions).",
   "_docs": "https://learn.microsoft.com/en-us/fabric/cicd/deployment-pipelines/create-rules",
   "pipeline": "DeployPipeline",
-  "_promotion_model": "Deploy ALL supported items in a SINGLE pass so the Deployment Pipeline pairs them by name and rewrites internal references (including PL_Refresh_Master's activity GUIDs) to the paired Prod items. The three rules below cover the bindings that do NOT auto-rebind, so Prod has no orphaned GUIDs or datasource names.",
-  "_recommended_alternative": "Prefer the Variable Library (variable_library/VL_CICD_Bindings.json) for the notebook and dataflow bindings — IDs resolve at runtime from the active per-stage value set, so nothing carries a Dev GUID into Prod. Only the Gold_SM data-source rule below is still required (DirectLake can't consume a Variable Library). The notebook and dataflow rules here are the rules-only equivalent if you skip the Variable Library.",
-  "_report_note": "Gold_Dashboard is a PBIR report. PBIR reports are NOT supported by deployment pipelines, so the report is delivered to Prod via Git (connect ws-CICD-Prod to the repo and Update). Its definition.pbir references Gold_SM byPath, so it binds to the Prod semantic model by name.",
+  "_promotion_model": "PRIMARY/SIMPLEST option. Deploy ALL items in a SINGLE pass so the Deployment Pipeline pairs them by name and rewrites internal references (including PL_Refresh_Master's activity GUIDs) to the paired Prod items. The report autobinds to the paired Prod Gold_SM. The three rules below cover the only bindings that do NOT auto-rebind, so Prod has no orphaned GUIDs or datasource names.",
+  "_optional_alternative": "Option 2: move the notebook and dataflow IDs into a Variable Library (variable_library/VL_CICD_Bindings.json) so they resolve at runtime per stage, and keep only the Gold_SM data-source rule below (DirectLake can't consume a Variable Library). Use this only when you want config-as-code or many items share the same IDs.",
+  "_report_note": "Gold_Dashboard is built in the workspace (live connection to Gold_SM) and promotes through the deployment pipeline. It AUTOBINDS to the paired Prod Gold_SM — no rule and no Git step needed.",
   "rules": [
     {
       "item": "Gold_SM",
@@ -48,7 +48,7 @@
     "4. DF_Gold_PA -> Parameters -> Prod Silver_LH IDs (required).",
     "5. NB_01/NB_02/NB_03 -> Default lakehouse -> matching Prod lakehouse (deterministic).",
     "6. PL_Refresh_Master needs no rule — its activity GUIDs are re-paired automatically.",
-    "7. Gold_Dashboard (PBIR) is not deployed by the pipeline — connect ws-CICD-Prod to Git and Update to deliver it.",
+    "7. Gold_Dashboard needs no rule — the report autobinds to the paired Prod Gold_SM.",
     "8. Rules are stored on the pipeline and applied on every deploy, including GitHub Actions deploys."
   ]
 }
