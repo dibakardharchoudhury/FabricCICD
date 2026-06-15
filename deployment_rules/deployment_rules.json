@@ -1,5 +1,5 @@
 {
-  "_comment": "Deployment Rules for DeployPipeline — configure these in Fabric UI: Pipeline → ⚙️ Deployment Rules",
+  "_comment": "Deployment Rules for DeployPipeline — configure in Fabric UI: Pipeline → ⚙️ Deployment Rules on the target stage. Rules can't be imported from a file; this is the reference for what to enter.",
   "_docs": "https://learn.microsoft.com/en-us/fabric/cicd/deployment-pipelines/create-rules",
   "pipeline": "DeployPipeline",
   "rules": [
@@ -7,27 +7,31 @@
       "item": "PL_Refresh_Master",
       "type": "DataPipeline",
       "rule": "PipelineParameter",
-      "description": "Sets the Environment parameter per stage",
+      "description": "PL_Refresh_Master resolves its workspace at runtime via @pipeline().DataFactory, so no WorkspaceId rule is needed. Set only the Environment flag and the per-stage item GUIDs below. Item GUIDs come from each workspace (item -> Settings, or the item URL).",
       "stages": {
-        "Development": { "Environment": "dev" },
-        "Production":  { "Environment": "prod" }
-      }
-    },
-    {
-      "item": "PL_Refresh_Master",
-      "type": "DataPipeline",
-      "rule": "PipelineParameter",
-      "description": "Sets the SemanticModelId per stage (Gold_SM GUID differs by workspace)",
-      "stages": {
-        "Development": { "SemanticModelId": "<DEV_GOLD_SM_GUID>" },
-        "Production":  { "SemanticModelId": "<PROD_GOLD_SM_GUID>" }
+        "Development": {
+          "Environment": "dev",
+          "BronzeNotebookId": "<DEV_NB_01_GUID>",
+          "SilverNotebookId": "<DEV_NB_02_GUID>",
+          "GoldDataflowId": "<DEV_DF_GOLD_PA_GUID>",
+          "GoldNotebookId": "<DEV_NB_03_GUID>",
+          "SemanticModelId": "<DEV_GOLD_SM_GUID>"
+        },
+        "Production": {
+          "Environment": "prod",
+          "BronzeNotebookId": "<PROD_NB_01_GUID>",
+          "SilverNotebookId": "<PROD_NB_02_GUID>",
+          "GoldDataflowId": "<PROD_DF_GOLD_PA_GUID>",
+          "GoldNotebookId": "<PROD_NB_03_GUID>",
+          "SemanticModelId": "<PROD_GOLD_SM_GUID>"
+        }
       }
     },
     {
       "item": "Gold_SM",
       "type": "SemanticModel",
       "rule": "DataSourceRule",
-      "description": "Binds semantic model to the stage-appropriate Gold_LH SQL endpoint",
+      "description": "Binds the semantic model to the stage-appropriate Gold_LH SQL endpoint",
       "stages": {
         "Development": {
           "dataSourceType": "Lakehouse",
@@ -41,10 +45,11 @@
     }
   ],
   "_howto": [
-    "1. Open DeployPipeline in Fabric portal",
-    "2. Click ⚙️ Deployment Rules on the Dev→Prod stage boundary",
-    "3. For each rule above: select the item → choose rule type → fill in values per stage",
-    "4. Rules are applied automatically every time you deploy between stages",
-    "5. Rules for the SemanticModel data source require the Connection ID from Fabric Admin Portal → Connections"
+    "1. Open DeployPipeline in the Fabric portal",
+    "2. Click the Deployment Rules gear on the target (Production) stage",
+    "3. For PL_Refresh_Master add Parameter rules for Environment + the five item-GUID parameters",
+    "4. For Gold_SM add a Data source rule pointing at that stage's Gold_LH SQL endpoint",
+    "5. Rules are stored on the pipeline and applied automatically on every deploy (including GitHub Actions deploys)",
+    "TIP: Promote all items in the SAME deploy so Fabric auto-pairs them; paired notebooks/dataflow/model keep their bindings and the GUID rules become a safety net, not a requirement"
   ]
 }

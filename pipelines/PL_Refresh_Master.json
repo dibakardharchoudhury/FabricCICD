@@ -2,144 +2,76 @@
   "name": "PL_Refresh_Master",
   "objectId": "00000000-0000-0000-0000-000000000001",
   "properties": {
-    "description": "Master orchestration pipeline — runs the full Medallion end to end: NB_01_Seed_Bronze → NB_02_Transform_Silver → DF_Gold_PA (builds Gold production_daily) → NB_03_Aggregate_Gold (cost/schedule/KPI tables) → Refresh Gold_SM. Used in both stages (Dev/Prod); the Environment parameter controls stage-specific behavior.",
+    "description": "Master orchestration - runs the full Medallion end to end: NB_01_Seed_Bronze -> NB_02_Transform_Silver -> DF_Gold_PA (builds Gold production_daily) -> NB_03_Aggregate_Gold (cost/schedule/KPI) -> Refresh Gold_SM. Fully parameterized: workspace resolves at runtime via @pipeline().DataFactory (no per-stage rebinding); every item GUID is a pipeline parameter set per stage by Deployment Rules.",
     "activities": [
       {
         "name": "NB_Seed_Bronze",
         "type": "TridentNotebook",
         "dependsOn": [],
-        "policy": {
-          "timeout": "0.01:00:00",
-          "retry": 1,
-          "retryIntervalInSeconds": 30
-        },
+        "policy": { "timeout": "0.01:00:00", "retry": 1, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
         "typeProperties": {
-          "notebookId": "NB_01_Seed_Bronze",
-          "workspaceId": "#{pipeline().parameters.WorkspaceId}",
+          "notebookId": { "value": "@pipeline().parameters.BronzeNotebookId", "type": "Expression" },
+          "workspaceId": { "value": "@pipeline().DataFactory", "type": "Expression" },
           "parameters": {
-            "environment": {
-              "value": "#{pipeline().parameters.Environment}",
-              "type": "string"
-            }
+            "environment": { "value": { "value": "@pipeline().parameters.Environment", "type": "Expression" }, "type": "string" }
           }
         }
       },
       {
         "name": "NB_Transform_Silver",
         "type": "TridentNotebook",
-        "dependsOn": [
-          {
-            "activity": "NB_Seed_Bronze",
-            "dependencyConditions": ["Succeeded"]
-          }
-        ],
-        "policy": {
-          "timeout": "0.01:30:00",
-          "retry": 1,
-          "retryIntervalInSeconds": 60
-        },
+        "dependsOn": [ { "activity": "NB_Seed_Bronze", "dependencyConditions": ["Succeeded"] } ],
+        "policy": { "timeout": "0.01:30:00", "retry": 1, "retryIntervalInSeconds": 60, "secureOutput": false, "secureInput": false },
         "typeProperties": {
-          "notebookId": "NB_02_Transform_Silver",
-          "workspaceId": "#{pipeline().parameters.WorkspaceId}",
+          "notebookId": { "value": "@pipeline().parameters.SilverNotebookId", "type": "Expression" },
+          "workspaceId": { "value": "@pipeline().DataFactory", "type": "Expression" },
           "parameters": {
-            "environment": {
-              "value": "#{pipeline().parameters.Environment}",
-              "type": "string"
-            }
+            "environment": { "value": { "value": "@pipeline().parameters.Environment", "type": "Expression" }, "type": "string" }
           }
         }
       },
       {
         "name": "DF_Gold_Production",
         "type": "RefreshDataflow",
-        "dependsOn": [
-          {
-            "activity": "NB_Transform_Silver",
-            "dependencyConditions": ["Succeeded"]
-          }
-        ],
-        "policy": {
-          "timeout": "0.01:00:00",
-          "retry": 1,
-          "retryIntervalInSeconds": 30
-        },
+        "dependsOn": [ { "activity": "NB_Transform_Silver", "dependencyConditions": ["Succeeded"] } ],
+        "policy": { "timeout": "0.01:00:00", "retry": 1, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
         "typeProperties": {
-          "dataflowId": "DF_Gold_PA",
-          "workspaceId": "#{pipeline().parameters.WorkspaceId}",
-          "notifyOption": "NoNotification",
-          "dataflowType": "WorkspaceDataflow"
+          "dataflowId": { "value": "@pipeline().parameters.GoldDataflowId", "type": "Expression" },
+          "workspaceId": { "value": "@pipeline().DataFactory", "type": "Expression" },
+          "notifyOption": "NoNotification"
         }
       },
       {
         "name": "NB_Aggregate_Gold",
         "type": "TridentNotebook",
-        "dependsOn": [
-          {
-            "activity": "DF_Gold_Production",
-            "dependencyConditions": ["Succeeded"]
-          }
-        ],
-        "policy": {
-          "timeout": "0.01:00:00",
-          "retry": 1,
-          "retryIntervalInSeconds": 30
-        },
+        "dependsOn": [ { "activity": "DF_Gold_Production", "dependencyConditions": ["Succeeded"] } ],
+        "policy": { "timeout": "0.01:00:00", "retry": 1, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
         "typeProperties": {
-          "notebookId": "NB_03_Aggregate_Gold",
-          "workspaceId": "#{pipeline().parameters.WorkspaceId}",
+          "notebookId": { "value": "@pipeline().parameters.GoldNotebookId", "type": "Expression" },
+          "workspaceId": { "value": "@pipeline().DataFactory", "type": "Expression" },
           "parameters": {
-            "environment": {
-              "value": "#{pipeline().parameters.Environment}",
-              "type": "string"
-            }
+            "environment": { "value": { "value": "@pipeline().parameters.Environment", "type": "Expression" }, "type": "string" }
           }
         }
       },
       {
         "name": "Refresh_Semantic_Model",
         "type": "TridentDatasetRefresh",
-        "dependsOn": [
-          {
-            "activity": "NB_Aggregate_Gold",
-            "dependencyConditions": ["Succeeded"]
-          }
-        ],
-        "policy": {
-          "timeout": "0.00:30:00",
-          "retry": 2,
-          "retryIntervalInSeconds": 60
-        },
+        "dependsOn": [ { "activity": "NB_Aggregate_Gold", "dependencyConditions": ["Succeeded"] } ],
+        "policy": { "timeout": "0.00:30:00", "retry": 2, "retryIntervalInSeconds": 60, "secureOutput": false, "secureInput": false },
         "typeProperties": {
-          "datasetId": "#{pipeline().parameters.SemanticModelId}",
-          "workspaceId": "#{pipeline().parameters.WorkspaceId}",
-          "retryPolicy": {
-            "type": "exponentialBackoff",
-            "retryAttempts": 2
-          }
+          "datasetId": { "value": "@pipeline().parameters.SemanticModelId", "type": "Expression" }
         }
       }
     ],
     "parameters": {
-      "Environment": {
-        "type": "string",
-        "defaultValue": "dev",
-        "description": "Target environment: dev | prod. Set by Deployment Rules per stage."
-      },
-      "WorkspaceId": {
-        "type": "string",
-        "defaultValue": "",
-        "description": "Fabric workspace ID — auto-populated by the platform at runtime."
-      },
-      "SemanticModelId": {
-        "type": "string",
-        "defaultValue": "",
-        "description": "Gold_SM semantic model ID — set via Deployment Rules per stage."
-      }
+      "Environment":      { "type": "string", "defaultValue": "dev" },
+      "BronzeNotebookId": { "type": "string", "defaultValue": "00000000-0000-0000-0000-000000000000" },
+      "SilverNotebookId": { "type": "string", "defaultValue": "00000000-0000-0000-0000-000000000000" },
+      "GoldDataflowId":   { "type": "string", "defaultValue": "00000000-0000-0000-0000-000000000000" },
+      "GoldNotebookId":   { "type": "string", "defaultValue": "00000000-0000-0000-0000-000000000000" },
+      "SemanticModelId":  { "type": "string", "defaultValue": "00000000-0000-0000-0000-000000000000" }
     },
-    "annotations": [
-      "MedallionLayer=All",
-      "CICDDemo=true",
-      "Version=1.0"
-    ]
+    "annotations": [ "MedallionLayer=All", "CICDDemo=true", "Version=2.0" ]
   }
 }
