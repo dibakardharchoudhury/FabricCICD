@@ -261,14 +261,20 @@ if CURRENT_WS_ID and WORKSPACE_ID != CURRENT_WS_ID:
     )
 
 # Cell 8 — (1) Attach ALL THREE lakehouses to every notebook; set the stage-appropriate DEFAULT
-# The lakehouse binding lives in the notebook metadata ("dependencies.lakehouse"):
+# The lakehouse binding lives in the notebook metadata ("metadata.dependencies.lakehouse"):
 #   - default_lakehouse / _name / _workspace_id  -> the ONE default (Bronze for NB_01,
 #     Silver for NB_02, Gold for NB_03 — so each writes to its own layer by default), and
 #   - known_lakehouses                           -> the FULL list of attached lakehouses
 #     (all three), so every notebook can also reach the other two layers by three-part name.
-# We rewrite both, in this stage's GUIDs, and push the definition back via REST.
+#
+# IMPORTANT: we parse the .ipynb definition as JSON and SET this whole block, rather than
+# regex-replacing existing fields. A freshly deployed notebook in a new stage may have NO
+# lakehouse metadata at all (the deployment pipeline does not carry a default lakehouse).
+# A regex that only replaces existing keys would then bind nothing, leaving the notebook
+# with no default context — exactly the "No default context found, please attach a
+# lakehouse before running spark sql queries with partial namespaces" failure. Building the
+# block from scratch guarantees the default + all three lakehouses are always present.
 ALL_LAKEHOUSE_IDS = [BRONZE_LAKEHOUSE_ID, SILVER_LAKEHOUSE_ID, GOLD_LAKEHOUSE_ID]
-KNOWN_LH_JSON = "[" + ", ".join(f'{{"id": "{lh}"}}' for lh in ALL_LAKEHOUSE_IDS) + "]"
 
 notebook_to_default = {
     "NB_01_Seed_Bronze":      ("Bronze_LH", BRONZE_LAKEHOUSE_ID),
@@ -277,21 +283,38 @@ notebook_to_default = {
 }
 
 for nb_name, (lh_name, lh_id) in notebook_to_default.items():
-    src = labs.notebook.get_notebook_definition(nb_name, workspace=WORKSPACE_ID, decode=True)
-    # Point the single DEFAULT lakehouse at this notebook's own layer (this stage).
-    src = re.sub(r'("default_lakehouse"\s*:\s*")[^"]*(")',              rf'\g<1>{lh_id}\g<2>', src)
-    src = re.sub(r'("default_lakehouse_name"\s*:\s*")[^"]*(")',         rf'\g<1>{lh_name}\g<2>', src)
-    src = re.sub(r'("default_lakehouse_workspace_id"\s*:\s*")[^"]*(")', rf'\g<1>{WORKSPACE_ID}\g<2>', src)
-    # Attach ALL THREE lakehouses. Replace an existing known_lakehouses array if present,
-    # otherwise inject one right after the default_lakehouse_workspace_id field.
-    if re.search(r'"known_lakehouses"\s*:\s*\[', src):
-        src = re.sub(r'"known_lakehouses"\s*:\s*\[.*?\]',
-                     f'"known_lakehouses": {KNOWN_LH_JSON}', src, flags=re.DOTALL)
-    else:
-        src = re.sub(r'("default_lakehouse_workspace_id"\s*:\s*"[^"]*")',
-                     rf'\g<1>, "known_lakehouses": {KNOWN_LH_JSON}', src)
-    with _quiet():
-        labs.notebook.update_notebook_definition(name=nb_name, notebook_content=src, workspace=WORKSPACE_ID)
+    nb_id = resolve_item_id(WORKSPACE_ID, nb_name, "Notebook")
+    # Pull the definition in ipynb form so the lakehouse binding lives in JSON metadata.
+    definition = fabric_rest(
+        "POST", f"/workspaces/{WORKSPACE_ID}/items/{nb_id}/getDefinition?format=ipynb"
+    ).get("definition")
+    if not definition or "parts" not in definition:
+        raise RuntimeError(
+            f"{nb_name}: getDefinition did not return a 'definition.parts' payload — "
+            "cannot set its lakehouse binding."
+        )
+    lakehouse_block = {
+        "default_lakehouse":              lh_id,
+        "default_lakehouse_name":         lh_name,
+        "default_lakehouse_workspace_id": WORKSPACE_ID,
+        "known_lakehouses":               [{"id": x} for x in ALL_LAKEHOUSE_IDS],
+    }
+    patched = False
+    for part in definition["parts"]:
+        if part["path"].lower().endswith(".ipynb"):
+            nb_json = json.loads(base64.b64decode(part["payload"]).decode("utf-8"))
+            # Create metadata.dependencies if absent, then SET the lakehouse block outright.
+            nb_json.setdefault("metadata", {}).setdefault("dependencies", {})["lakehouse"] = lakehouse_block
+            part["payload"] = base64.b64encode(
+                json.dumps(nb_json).encode("utf-8")
+            ).decode("utf-8")
+            patched = True
+    if not patched:
+        raise RuntimeError(f"{nb_name}: no '.ipynb' part found in its definition.")
+    fabric_rest(
+        "POST", f"/workspaces/{WORKSPACE_ID}/items/{nb_id}/updateDefinition",
+        {"definition": definition},
+    )
     print(f"→ {nb_name}: default {lh_name}, attached Bronze_LH + Silver_LH + Gold_LH.")
 
 # Cell 9 — (2) Bind Dataflow Gen2 DF_Gold_PA parameters to this stage's Silver lakehouse
