@@ -39,42 +39,39 @@ CI/CD:  GitHub (main) ─► GitHub Actions ─► Fabric Deployment Pipeline (w
 
 ## Part A — Build the data
 
-**1. Prerequisites** — Fabric capacity (F2+); two workspaces (`ws-CICD-Dev`, `ws-CICD-Prod`); Git + GitHub integration enabled. For automation: an Entra service principal allowed to use Fabric APIs (full setup in Step 14).
+**1. Prerequisites** — Fabric capacity (F2+); two workspaces (`ws-CICD-Dev`, `ws-CICD-Prod`); Git/GitHub integration enabled. Automation also needs an Entra service principal (Step 14).
 
-**2. Create three lakehouses** in `ws-CICD-Dev` with these **exact** names: `Bronze_LH`, `Silver_LH`, `Gold_LH`. Notebooks write three-part names (e.g. `Bronze_LH.dbo.production_raw`), so names must match.
+**2. Create three lakehouses** in `ws-CICD-Dev` with these **exact** names: `Bronze_LH`, `Silver_LH`, `Gold_LH`. Notebooks reference them by three-part name (e.g. `Bronze_LH.dbo.production_raw`), so names must match — this is also what keeps them portable across workspaces (resolved by name, not GUID).
 
-**3. Sync notebooks from Git** — Workspace settings → Git integration → connect this repo → Source control → **Update**. The `NB_*.Notebook/` items arrive as real notebooks; no manual `.py` import.
+**3. Sync notebooks from Git** — Workspace settings → Git integration → connect this repo → Source control → **Update**. The `NB_*.Notebook/` items arrive as real notebooks.
 
-**4. Attach lakehouses to each notebook** ⚠️ — open `NB_01`/`NB_02`/`NB_03`, in **Explorer → Lakehouses** add all three lakehouses and set one default. Attached-lakehouse GUIDs are workspace-specific and **not** committed to Git, so re-attach once per workspace after every sync/deploy. Without this, cross-lakehouse writes fail with `[SCHEMA_NOT_FOUND]`. `NB_00` only verifies the lakehouses exist.
+**4. Attach lakehouses + set default** ⚠️ — open `NB_01`/`NB_02`/`NB_03` → **Explorer → Lakehouses** → add all three and set one default. The default-lakehouse GUID is workspace-specific (not in Git), so set it once in Dev; promotion rebinds it in Prod automatically (Step 12). Without an attached lakehouse, writes fail with `[SCHEMA_NOT_FOUND]`. `NB_00` only verifies the lakehouses exist.
 
-**5. Run in order:** `NB_00` → `NB_01` → `NB_02` → **`DF_Gold_PA`** (Step 7) → `NB_03`.
-Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `NB_03` builds `cost_monthly` + `schedule_summary` + `field_kpi_facts`. `NB_03` joins `production_daily`, so run `DF_Gold_PA` first.
+**5. Run in order:** `NB_00` → `NB_01` → `NB_02` → **`DF_Gold_PA`** (Step 7) → `NB_03`. Gold is built by two items: `DF_Gold_PA` → `production_daily`; `NB_03` → `cost_monthly` + `schedule_summary` + `field_kpi_facts`. `NB_03` joins `production_daily`, so run the Dataflow first.
 
 ---
 
 ## Part B — Add the analytics items
 
-**6. Import & run the data pipeline `PL_Refresh_Master`** — New → Data pipeline → **Home → Import from a template** → `pipelines/PL_Refresh_Master.zip`. The five activities import pre-wired in this order: `NB_Setup → NB_01 → NB_02 → DF_Gold_PA → NB_03`, each gated on the previous. One run = full end-to-end Gold build.
+**6. Import & run the data pipeline `PL_Refresh_Master`** — New → Data pipeline → **Home → Import from a template** → `pipelines/PL_Refresh_Master.zip`. Five activities import pre-wired: `NB_Setup → NB_01 → NB_02 → DF_Gold_PA → NB_03`, each gated on the previous. After import, **open each activity and re-pick your own item** (shipped GUIDs point at the author's workspace). Git sync and Deployment-Pipeline promotion re-pair these automatically — manual re-pick is only for the first template import.
 
-  The activities reference items by GUID, and the shipped GUIDs point at the author's workspace — so after importing, **open each activity and re-pick your own item**: the four Notebook activities → `NB_Setup`/`NB_01`/`NB_02`/`NB_03`; the Dataflow activity → `DF_Gold_PA`. (Syncing via Git or promoting through the Deployment Pipeline re-pairs these automatically — manual re-pick is only for a fresh template import.)
+  > After you commit from Fabric (Step 10), the pipeline serializes to `PL_Refresh_Master.DataPipeline/` in Git — that becomes the source of truth; the `.zip` is import-only.
 
-  > Once you commit from Fabric (Step 10), the pipeline serializes into Git as its own `PL_Refresh_Master.DataPipeline/` folder — that becomes the source of truth. The `.zip` is only the first-time import.
-
-**7. Build the Gold Dataflow `DF_Gold_PA`** (required — builds `production_daily`):
-1. **+ New item → Dataflow Gen2**, name it `DF_Gold_PA`.
-2. **Get data → Import from a Power Query template** → `dataflows/DF_Gold_PA.pqt`. It loads two parameters (`SilverWorkspaceId`, `SilverLakehouseId`) and two queries (`SilverProduction`, `GoldProductionDaily`).
-3. Set the two parameters to **your `Silver_LH` IDs** (the read source) from its URL `…/groups/<SilverWorkspaceId>/lakehouses/<SilverLakehouseId>`. *Easier:* delete the `Source` step on `SilverProduction` and re-create it via **Get data → Lakehouse → `Silver_LH` → `production_conformed`**.
+**7. Build the Gold Dataflow `DF_Gold_PA`** (builds `production_daily`):
+1. **+ New item → Dataflow Gen2**, name `DF_Gold_PA`.
+2. **Get data → Import from a Power Query template** → `dataflows/DF_Gold_PA.pqt` (loads parameters `SilverWorkspaceId`/`SilverLakehouseId` and queries `SilverProduction`/`GoldProductionDaily`).
+3. Set the two parameters to **your `Silver_LH` IDs** from its URL `…/groups/<SilverWorkspaceId>/lakehouses/<SilverLakehouseId>`.
 4. On `GoldProductionDaily` set **data destination → Lakehouse → `Gold_LH` → `production_daily`**, Update method **Replace**, then **Publish**.
 
-   (Manual fallback: paste each `let … in …` body from `DF_Gold_PA.m` into a Blank query — omit the `section`/`shared` lines.)
+   (Fallback: paste each `let … in …` body from `DF_Gold_PA.m` into a Blank query, omitting the `section`/`shared` lines.)
 
-**8. Create the semantic model `Gold_SM`** — open `Gold_LH` → **New semantic model** → tick the four Gold tables (`production_daily`, `cost_monthly`, `schedule_summary`, `field_kpi_facts`) → Confirm, then add the date dimension, relationships and measures by hand (a–c below). Publish so the model has **Enhanced Metadata** (mandatory for Deployment Pipelines). After you commit from Fabric (Step 10), the model serializes into Git as `Gold_SM.SemanticModel/` (TMDL) — that's the source of truth; copy its GUID for the `SemanticModelId` Deployment Rule.
+**8. Create the semantic model `Gold_SM`** — open `Gold_LH` → **New semantic model** → tick the four Gold tables (`production_daily`, `cost_monthly`, `schedule_summary`, `field_kpi_facts`) → Confirm. Publishing gives it **Enhanced Metadata** (required for Deployment Pipelines). After you commit from Fabric (Step 10) it serializes to `Gold_SM.SemanticModel/` (TMDL) in Git. Add the date dimension, relationships and measures (a–c):
 
-  **a. Calculated table `DateDim`** — Model view → **New table**, paste:
+  **a. Calculated table `DateDim`** — Model view → **New table**:
   ```DAX
   DateDim = CALENDAR(DATE(2024,1,1), DATE(2024,12,31))
   ```
-  Then add these **calculated columns** (one **New column** each, on the `DateDim` table):
+  Then add these **calculated columns** (one **New column** each, on `DateDim`):
   ```DAX
   Year       = YEAR([Date])
   Month      = MONTH([Date])
@@ -82,15 +79,14 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
   Quarter    = "Q" & QUARTER([Date])
   WeekNumber = WEEKNUM([Date])
   ```
-  Mark `DateDim[Date]` as the date key — in **Power BI Desktop** select the column → Column tools → **Mark as date table** → `Date`. In the **Fabric web editor** there's no such option (and it isn't required here); the model works from the relationship below.
 
-  **b. Relationships** — the model has exactly **two**:
-  - `production_daily[date]` → `DateDim[Date]` (many-to-one, **single** direction, **active**) — drives all time slicing.
-  - `production_daily[field]` → `field_kpi_facts[field]` (many-to-one, single, **inactive**) — kept for `USERELATIONSHIP`, off by default.
+  **b. Relationships** — exactly **two**:
+  - `production_daily[date]` → `DateDim[Date]` (many-to-one, single, **active**) — drives time slicing.
+  - `production_daily[field]` → `field_kpi_facts[field]` (many-to-one, single, **inactive**) — for `USERELATIONSHIP`.
 
-  `cost_monthly` and `schedule_summary` are **intentionally not related** — they're pre-aggregated at different grains (monthly / by priority) and each visual slices them by their own `field` / `cost_type` / `priority` columns. Joining the summary tables on `field` would fan out into ambiguous many-to-many and inflate sums. To enable one `field` slicer across all tables, add a `DimField` dimension (one row per field) and relate `DimField[field]` 1→* to each table — that's an optional star-schema enhancement, not part of this demo.
+  `cost_monthly` and `schedule_summary` are intentionally unrelated — they're pre-aggregated at different grains; each visual slices them by its own `field`/`cost_type`/`priority` columns.
 
-  **c. Measures** — a measure's *home table* (where you create it) is just where it appears in the Fields pane; it doesn't affect the result. Create each group below by right-clicking that table in the Fields pane → **New measure**, pasting the DAX, and setting its format.
+  **c. Measures** — right-click the table → **New measure**, paste, set format:
 
   On **`production_daily`**:
   ```DAX
@@ -103,75 +99,65 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
   OPEX Total       = CALCULATE(SUM(cost_monthly[total_cost_usd]), cost_monthly[cost_type] = "OPEX")    // $ #,##0
   CAPEX Total      = CALCULATE(SUM(cost_monthly[total_cost_usd]), cost_monthly[cost_type] = "CAPEX")   // $ #,##0
   ```
-  These are the measures the report uses; add more if you like. **Save.**
+  **Save.**
 
-> ⚠️ **`production_daily` missing from the table picker?** Tables written by **Dataflow Gen2** (`production_daily`) appear in the SQL analytics endpoint / OneLake picker **after a metadata sync**, while Spark/notebook tables show immediately. If the New-semantic-model dialog lists only `cost_monthly` / `schedule_summary` / `field_kpi_facts`: open **`Gold_LH` → SQL analytics endpoint**, click **Refresh** (or the ⟳ icon in the table picker), wait a few seconds, and re-open the dialog — this is only the live picker lagging.
+> ⚠️ **`production_daily` missing from the table picker?** Dataflow Gen2 tables appear in the SQL endpoint / OneLake picker only **after a metadata sync**. Open **`Gold_LH` → SQL analytics endpoint → Refresh**, wait a few seconds, and re-open the dialog.
 
-**9. Build the report `Gold_Dashboard` with Copilot** — New → Report → live-connect to `Gold_SM` (DirectLake, never Import). Open the **Copilot** pane in the report editor and let it draft the visuals, e.g.:
+**9. Build the report `Gold_Dashboard` with Copilot** — New → Report → live-connect to `Gold_SM` (DirectLake, never Import). Open the **Copilot** pane and prompt it, e.g.:
 
   > "Create a Production Analysis page with cards for Total BOE, Total Cost (USD) and BOE Last Day; a column chart of Total BOE by field; a line chart of Total BOE over DateDim[Date]; and a clustered column chart of Total Cost (USD) by field broken out by cost_type."
 
-  Copilot wires the visuals to the model's measures (`Total BOE`, `Total Cost (USD)`, `BOE Last Day`) and Gold columns (`field`, `cost_type`, `DateDim[Date]`). Review what it generates, tweak as needed, and **Save as `Gold_Dashboard`**. Commit it from Fabric (Step 10) so it serializes into Git as `Gold_Dashboard.Report/` (PBIR) and promotes with the rest.
+  Review, tweak, **Save as `Gold_Dashboard`**, then commit from Fabric (Step 10) so it serializes to `Gold_Dashboard.Report/` (PBIR). The report reaches Prod via **Git**, not the deployment pipeline (Step 12).
 
 ---
 
 ## Part C — CI/CD
 
-> Part C1 (Steps 10–13) is the **manual** Dev → Prod promotion you can test right now — no service principal, no GitHub Actions. Part C2 (Steps 14–16) adds automation later.
+Promotion model: **Git** is source control into Dev; the **Deployment Pipeline** promotes Dev → Prod. Part C1 is the manual promotion; Part C2 automates it.
 
-### Part C1 — Manual promotion with a Deployment Pipeline
+### How each item reaches a fresh Prod workspace without orphaned bindings
 
-**10. Connect Git & commit** — Workspace settings → Git integration → GitHub → connect → **Update**. Then Source control → select items → **Commit**.
+Deploy **all supported items in one pass** so the pipeline pairs them by name and rewrites internal references to the Prod copies. Per-type behavior:
 
-**11. Create the Deployment Pipeline** — Fabric portal → Deployment pipelines → New → two stages (**Development → Production**); assign `ws-CICD-Dev` to Development and `ws-CICD-Prod` (empty) to Production. In the **Development** stage select **all** items and click **Deploy** *once*. Fabric creates paired copies in Prod and links them. **Deploy everything in a single pass** — items deployed in separate batches don't auto-pair and create duplicates. Copy the **pipeline GUID** from the URL (needed later for automation).
+| Item | Promotes via | Rebinds to Prod by | Action |
+| --- | --- | --- | --- |
+| 3 Lakehouses | Deployment Pipeline | Name pairing | Structure copies, **data does not** — reload (Step 13) |
+| 4 Notebooks | Deployment Pipeline | Code uses **three-part names** (name-based, no GUID) + default-lakehouse **auto-bind**; a **Default-lakehouse rule** makes it deterministic | Set the rule once (Step 12) |
+| Data pipeline `PL_Refresh_Master` | Deployment Pipeline | Activity GUIDs **auto-paired/rewritten** when all items deploy together | None |
+| Dataflow `DF_Gold_PA` | Deployment Pipeline | **No auto-bind** — but source/dest are parameterized, so a **Parameter rule** injects the Prod `Silver_LH` IDs | Set the rule once (Step 12) |
+| Semantic model `Gold_SM` (DirectLake) | Deployment Pipeline | **DirectLake does NOT auto-bind** — a **Data source rule** is **required** | Set the rule once (Step 12) |
+| Report `Gold_Dashboard` (PBIR) | **Git** — PBIR isn't supported by deployment pipelines | `byPath` reference to `Gold_SM`, resolved by name | Connect Prod to Git → **Update** (Step 13) |
 
-**12. How each item maps Dev → Prod** — the deploy pairs items by name and re-points most bindings automatically. Out of all 10 items, **only the Dataflow needs a manual connection edit** and **only the semantic model needs a rule**:
+The three deployment rules are set **once on the Production stage** and re-apply on every deploy (manual or automated) — so no orphaned GUIDs or datasource names. `deployment_rules/deployment_rules.json` lists the exact values.
 
-| Item | Auto-binds on deploy? | What you do in Prod |
-| --- | --- | --- |
-| 3 Lakehouses (`Bronze_LH`/`Silver_LH`/`Gold_LH`) | Paired by name | Structure copies, **data does not** — reload (Step 13) |
-| 4 Notebooks (`NB_Setup`, `NB_01`–`03`) | Default lakehouse re-maps to paired Prod LH | Re-attach lakehouses if the pane is blank (Step 4). 3-part names (`Silver_LH.dbo.…`) resolve by name |
-| 1 Dataflow (`DF_Gold_PA`) | ⚠️ **No** — source/destination still point at **Dev** lakehouse GUIDs | **Open it in Prod, repoint** `SilverProduction` source → Prod `Silver_LH` and `GoldProductionDaily` destination → Prod `Gold_LH` (just set the two `Silver*Id` params), **Publish** |
-| 1 Semantic model (`Gold_SM`) | DirectLake re-binds to paired Prod `Gold_LH` | Add the **Data source rule** below to make it explicit; measures travel with the model |
-| 1 Report (`Gold_Dashboard`) | Re-binds to paired Prod `Gold_SM` | Confirm it shows Prod data |
+### Part C1 — Manual promotion
 
-**Configure the one rule** (`deployment_rules/deployment_rules.json` is the reference) — on the **Production** stage click **⚙️ Deployment rules** → select `Gold_SM` → **Data source rule** → point its Lakehouse / SQL endpoint at `ws-CICD-Prod/Gold_LH`, **Save**.
+**10. Connect Git & commit (Dev)** — Workspace settings → Git integration → GitHub → connect → **Update**, then Source control → select items → **Commit**.
 
-| Item | Rule | Set |
-| --- | --- | --- |
-| `Gold_SM` | Data source | Bind to `ws-CICD-Prod/Gold_LH` |
+**11. Create the Deployment Pipeline** — Deployment pipelines → New → two stages (**Development → Production**); assign `ws-CICD-Dev` to Development and empty `ws-CICD-Prod` to Production. Select **all** items in Development and **Deploy once** — separate batches don't auto-pair and create duplicates. Copy the **pipeline GUID** from the URL (needed for automation).
 
-> **No rule is needed for `PL_Refresh_Master`'s item references.** The pipeline points at notebooks/dataflow by literal GUID; when you promote **all items in the same deploy**, the Deployment Pipeline **auto-pairs** them and rewrites those GUIDs to the Prod items automatically on every deploy. The only manual rule is the `Gold_SM` data-source binding. Rules are portal-only (no public REST API) and apply automatically on every deploy.
+**12. Set the three Production-stage rules** — on the **Production** stage click **⚙️ Deployment rules**:
+- **`Gold_SM` → Data source** → bind to `ws-CICD-Prod/Gold_LH` — *required; DirectLake never auto-binds.*
+- **`DF_Gold_PA` → Parameters** → `SilverWorkspaceId`/`SilverLakehouseId` = Prod `Silver_LH` — *dataflows never auto-bind.*
+- **`NB_01`/`NB_02`/`NB_03` → Default lakehouse** → map each Dev lakehouse to its matching Prod lakehouse — *deterministic override of auto-bind.*
 
-**13. Reload data & verify the mapping** — lakehouse deploys carry **structure only, no data**, so populate Prod and check every binding:
+  Rules are portal-only (no REST API) and re-apply on every deploy. `PL_Refresh_Master`'s activity GUIDs need no rule — they auto-pair.
 
-1. **Pairing** — in the pipeline compare view every item shows the *paired* (chain-link) icon, none show "different"/"only in source"; no duplicate same-name items.
-2. **Lakehouses** — in Prod re-attach lakehouses in `NB_01`/`NB_02`/`NB_03` (Step 4).
-3. **Repoint the Dataflow** — open `DF_Gold_PA` in Prod, set `SilverWorkspaceId`/`SilverLakehouseId` to the **Prod** `Silver_LH`, confirm the `GoldProductionDaily` destination is **Prod** `Gold_LH`, **Publish**.
-4. **Load** — run `NB_Setup → NB_01 → NB_02`, refresh `DF_Gold_PA`, then run `NB_03` (or run `PL_Refresh_Master` once now that the Dataflow points at Prod).
-5. **Semantic model** — open `Gold_SM` → Settings/lineage shows **Prod** `Gold_LH` (not Dev); refresh; `Total BOE` / `Total Cost (USD)` return values.
-6. **Report** — open `Gold_Dashboard`; visuals render from Prod data and lineage points at the Prod `Gold_SM`.
+**13. Reload data, deliver the report & verify** — lakehouse deploys carry **structure only, no data**:
+1. **Pairing** — every item shows the chain-link (paired) icon; none "only in source"; no duplicate same-name items.
+2. **Load** — run `PL_Refresh_Master` once in Prod (`NB_Setup → NB_01 → NB_02 → DF_Gold_PA → NB_03`).
+3. **Semantic model** — `Gold_SM` lineage points at **Prod** `Gold_LH`; refresh; `Total BOE` / `Total Cost (USD)` return values.
+4. **Report** — connect `ws-CICD-Prod` to Git → **Update** to pull `Gold_Dashboard` (PBIR isn't in the pipeline); it binds to Prod `Gold_SM` by path and renders Prod data.
 
-> **Why the Dataflow is the one manual step:** notebooks, semantic models and reports use Fabric **internal item references** that the deployment pipeline rewrites to the paired Prod items. Dataflow Gen2 source/destination use **connection objects** that aren't part of that auto-rebind, so they keep pointing at Dev until you repoint them. Parameterizing those IDs is the first automation win in Part C2.
+### Part C2 — Automate the promotion
 
-### Part C2 — Automate the promotion (later)
+**14. Service principal & secrets** — register an Entra app (client/tenant ID, secret); enable *"Service principals can use Fabric APIs"*; add it as Admin on both workspaces and the pipeline. GitHub secrets: `FABRIC_TENANT_ID`, `FABRIC_CLIENT_ID`, `FABRIC_CLIENT_SECRET`, `FABRIC_PIPELINE_ID` (the pipeline GUID from Step 11).
 
-**14. Service principal & GitHub secrets** — register an Entra app (client ID, tenant ID, secret); enable *"Service principals can use Fabric APIs"*; add the SP as Admin on both workspaces and the deployment pipeline. Add GitHub secrets: `FABRIC_TENANT_ID`, `FABRIC_CLIENT_ID`, `FABRIC_CLIENT_SECRET`, `FABRIC_PIPELINE_ID` (the pipeline GUID from Step 11).
+**15. Add the workflow** — copy `github_actions/deploy-dev-to-prod.yml` to `.github/workflows/`. On push to `main` it acquires a Fabric token, calls `POST /v1/pipelines/{id}/deploy` (Dev→Prod), and gates on the GitHub `production` environment (add required reviewers). The three deployment rules apply server-side, so the only post-deploy steps are the data reload (Step 13.2) and the report Git **Update** (Step 13.4).
 
-**15. Add the workflow** — copy `github_actions/deploy-dev-to-prod.yml` to `.github/workflows/`. On push to `main` it gets a Fabric token, calls `POST /v1/pipelines/{id}/deploy` (Dev→Prod), and gates on the GitHub `production` environment (add required reviewers). The `Gold_SM` Deployment Rule applies server-side; the Dataflow repoint (Step 13.3) and data reload (Step 13.4) still run after each deploy until parameterized.
-
-**16. Demo the loop** — edit `NB_02` (e.g. uncomment the `gor_ratio` KPI) → run → Source control → Commit → PR to `main` → merge → GitHub Actions promotes Dev→Prod after reviewer approval.
+**16. Demo the loop** — edit `NB_02` (e.g. uncomment the `gor_ratio` KPI) → run → Commit → PR to `main` → merge → Actions promotes Dev→Prod after reviewer approval.
 
 ---
-
-## Efficient end-to-end CI/CD (how this repo is wired)
-
-- **Native item references** — the pipeline references notebooks/dataflow by literal GUID, exactly as Fabric exports them, so the template imports and saves without hanging. (Expression-based `notebookId`/`workspaceId` is what breaks the importer.)
-- **Promotion auto-pairs items** — build everything in Dev, assign workspaces, then deploy once: the Deployment Pipeline pairs every item and rewrites the pipeline's GUID references to the Prod items automatically on every subsequent deploy. No per-stage parameter wiring for item IDs.
-- **One manual rule** — only the `Gold_SM` data-source binding is set as a deployment rule; everything else item-related auto-pairs.
-- **One manual repoint** — the Dataflow Gen2 source/destination connections don't auto-rebind, so `DF_Gold_PA` is repointed once per target workspace (Step 13.3). Parameterizing those IDs is the first automation win.
-- **One-command refresh** — `PL_Refresh_Master` runs `NB_Setup → NB_01 → NB_02 → DF_Gold_PA → NB_03` in dependency order, so post-deploy data load is a single click (or one REST call).
-- **One-click pipeline import** — `PL_Refresh_Master.zip` is a verified Fabric export, so it imports and saves without hanging; after the first Fabric commit, Git's `PL_Refresh_Master.DataPipeline/` folder takes over as the source of truth.
 
 ## Key limitations
 
@@ -179,8 +165,9 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
 | --- | --- | --- |
 | Git | Sensitivity labels block commits; 50 MB/commit; Admin-only connect; no MyWorkspace | Remove labels; batch commits; pre-configure; use named workspaces |
 | Deploy | Lakehouse copies structure, not data | Run `PL_Refresh_Master` after each deploy |
-| Deploy | Items added after assignment aren't auto-paired; same-name unpaired items duplicate | Build all items first, verify pairing before deploying |
-| Deploy | Semantic models need Enhanced Metadata | Models created via Fabric **New semantic model** already have it; if authored externally, publish from modern Power BI Desktop / Tabular Editor |
-| Notebook | Attached-lakehouse GUIDs are workspace-specific | Keep `dependencies` empty in Git; re-attach per workspace (Step 4) |
-| Dataflow | Source/destination connections don't auto-rebind on deploy | Repoint `DF_Gold_PA` to the Prod lakehouses once after deploy (Step 13.3) |
-| Dataflow | New tables lag the SQL endpoint / picker | Refresh the Gold_LH SQL endpoint (Step 8 note) |
+| Deploy | Items added after assignment don't auto-pair; same-name unpaired items duplicate | Build all items first; verify pairing before deploying |
+| Deploy | DirectLake semantic models don't auto-bind | Data-source rule → Prod `Gold_LH` (Step 12) |
+| Deploy | Dataflow Gen2 doesn't auto-bind | Parameter rule → Prod `Silver_LH` (Step 12) |
+| Deploy | **PBIR reports aren't supported by deployment pipelines** | Deliver `Gold_Dashboard` to Prod via Git **Update** (Step 13.4) |
+| Notebook | Default-lakehouse GUID is workspace-specific | Default-lakehouse rule (Step 12); code uses three-part names |
+| Semantic model | Needs Enhanced Metadata for pipelines | Fabric **New semantic model** already has it |

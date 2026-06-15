@@ -1,31 +1,53 @@
 {
-  "_comment": "Deployment Rules for DeployPipeline — configure in Fabric UI: Pipeline → ⚙️ Deployment Rules on the target stage. Rules can't be imported from a file; this is the reference for what to enter.",
+  "_comment": "Deployment Rules for DeployPipeline — configure in the Fabric portal: Pipeline → Production stage → Deployment rules gear. Rules can't be imported from a file; this is the reference for what to enter. They are set once and re-apply on every deploy (manual or GitHub Actions).",
   "_docs": "https://learn.microsoft.com/en-us/fabric/cicd/deployment-pipelines/create-rules",
   "pipeline": "DeployPipeline",
-  "_how_item_references_are_handled": "PL_Refresh_Master references its notebooks and dataflow by LITERAL item GUID (this is how Fabric exports/stores pipelines and what imports cleanly — expression-based notebookId/workspaceId causes the importer to hang). You do NOT rewrite those GUIDs with deployment rules. Instead, promote ALL items in the SAME deploy so the Fabric Deployment Pipeline AUTO-PAIRS them; on every Dev → Prod deploy it rewrites the pipeline's item references to the paired Prod items automatically. The only rule you still configure by hand is the semantic-model data source binding below.",
+  "_promotion_model": "Deploy ALL supported items in a SINGLE pass so the Deployment Pipeline pairs them by name and rewrites internal references (including PL_Refresh_Master's activity GUIDs) to the paired Prod items. The three rules below cover the bindings that do NOT auto-rebind, so Prod has no orphaned GUIDs or datasource names.",
+  "_report_note": "Gold_Dashboard is a PBIR report. PBIR reports are NOT supported by deployment pipelines, so the report is delivered to Prod via Git (connect ws-CICD-Prod to the repo and Update). Its definition.pbir references Gold_SM byPath, so it binds to the Prod semantic model by name.",
   "rules": [
     {
       "item": "Gold_SM",
       "type": "SemanticModel",
       "rule": "DataSourceRule",
-      "description": "Binds the semantic model to the stage-appropriate Gold_LH SQL endpoint",
+      "required": true,
+      "description": "REQUIRED — DirectLake semantic models do not auto-bind. Binds the model to the stage's Gold_LH SQL endpoint.",
       "stages": {
-        "Development": {
-          "dataSourceType": "Lakehouse",
-          "connectionPath": "ws-CICD-Dev/Gold_LH"
-        },
-        "Production": {
-          "dataSourceType": "Lakehouse",
-          "connectionPath": "ws-CICD-Prod/Gold_LH"
-        }
+        "Development": { "dataSourceType": "Lakehouse", "connectionPath": "ws-CICD-Dev/Gold_LH" },
+        "Production":  { "dataSourceType": "Lakehouse", "connectionPath": "ws-CICD-Prod/Gold_LH" }
+      }
+    },
+    {
+      "item": "DF_Gold_PA",
+      "type": "DataflowGen2",
+      "rule": "ParameterRule",
+      "required": true,
+      "description": "REQUIRED — Dataflow Gen2 connections do not auto-bind. Inject the target-stage Silver_LH IDs (Text parameters) so source/destination repoint automatically.",
+      "parameters": {
+        "Development": { "SilverWorkspaceId": "<dev-silver-workspace-id>", "SilverLakehouseId": "<dev-silver-lakehouse-id>" },
+        "Production":  { "SilverWorkspaceId": "<prod-silver-workspace-id>", "SilverLakehouseId": "<prod-silver-lakehouse-id>" }
+      }
+    },
+    {
+      "item": ["NB_01_Seed_Bronze", "NB_02_Transform_Silver", "NB_03_Aggregate_Gold"],
+      "type": "Notebook",
+      "rule": "DefaultLakehouseRule",
+      "required": false,
+      "description": "Deterministic override of notebook default-lakehouse auto-binding. Map each notebook's Dev default lakehouse to its matching Prod lakehouse. Code uses three-part names (name-based); without this rule, auto-bind handles it when lakehouses deploy together.",
+      "mapping": {
+        "NB_01_Seed_Bronze":      { "from": "ws-CICD-Dev/Bronze_LH", "to": "ws-CICD-Prod/Bronze_LH" },
+        "NB_02_Transform_Silver": { "from": "ws-CICD-Dev/Silver_LH", "to": "ws-CICD-Prod/Silver_LH" },
+        "NB_03_Aggregate_Gold":   { "from": "ws-CICD-Dev/Gold_LH",   "to": "ws-CICD-Prod/Gold_LH" }
       }
     }
   ],
   "_howto": [
-    "1. Open DeployPipeline in the Fabric portal",
-    "2. Build ALL items in Dev first, then assign workspaces, then Deploy once so every item auto-pairs (notebooks, dataflow, pipeline, semantic model, report)",
-    "3. Click the Deployment Rules gear on the target (Production) stage",
-    "4. Add the Gold_SM Data source rule pointing at ws-CICD-Prod/Gold_LH",
-    "5. Rules are stored on the pipeline and applied automatically on every deploy (including GitHub Actions deploys); pipeline item references are re-paired automatically and need no rule"
+    "1. Build ALL items in Dev, then assign workspaces and Deploy once so every supported item auto-pairs (lakehouses, notebooks, data pipeline, dataflow, semantic model).",
+    "2. On the Production stage, click the Deployment rules gear.",
+    "3. Gold_SM -> Data source -> ws-CICD-Prod/Gold_LH (required).",
+    "4. DF_Gold_PA -> Parameters -> Prod Silver_LH IDs (required).",
+    "5. NB_01/NB_02/NB_03 -> Default lakehouse -> matching Prod lakehouse (deterministic).",
+    "6. PL_Refresh_Master needs no rule — its activity GUIDs are re-paired automatically.",
+    "7. Gold_Dashboard (PBIR) is not deployed by the pipeline — connect ws-CICD-Prod to Git and Update to deliver it.",
+    "8. Rules are stored on the pipeline and applied on every deploy, including GitHub Actions deploys."
   ]
 }
