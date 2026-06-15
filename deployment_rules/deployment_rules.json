@@ -42,13 +42,14 @@
     }
   ],
   "_howto": [
-    "1. Build ALL items in Dev, then assign workspaces and Deploy once so every supported item auto-pairs (lakehouses, notebooks, data pipeline, dataflow, semantic model).",
-    "2. On the Production stage, click the Deployment rules gear.",
-    "3. Gold_SM -> Data source -> ws-CICD-Prod/Gold_LH (required).",
-    "4. DF_Gold_PA -> Parameters -> Prod Silver_LH IDs (required).",
-    "5. NB_01/NB_02/NB_03 -> Default lakehouse -> matching Prod lakehouse (deterministic).",
-    "6. PL_Refresh_Master needs no rule — its activity GUIDs are re-paired automatically.",
-    "7. Gold_Dashboard needs no rule — the report autobinds to the paired Prod Gold_SM.",
-    "8. Rules are stored on the pipeline and applied on every deploy, including GitHub Actions deploys."
+    "1. Build ALL items in Dev, assign both workspaces to the pipeline, then Deploy ONCE so every supported item auto-pairs into Prod (lakehouses, notebooks, data pipeline, dataflow, semantic model).",
+    "2. WHY deploy first: a deployment rule can only attach to an item that already EXISTS in the target stage. Before the first deploy the Production rules panel is empty. Order is always: deploy once -> set rules -> deploy again.",
+    "3. On the Production stage, click the Deployment rules (gear/lightning) icon on the item.",
+    "4. Gold_SM -> Data source -> ws-CICD-Prod/Gold_LH (required).",
+    "5. DF_Gold_PA -> Parameters -> Prod Silver_LH IDs (required).",
+    "6. NB_01/NB_02/NB_03 -> Default lakehouse -> matching Prod lakehouse (one rule per notebook).",
+    "7. PL_Refresh_Master needs no rule — its activity GUIDs are re-paired automatically.",
+    "8. Gold_Dashboard needs no rule — the report autobinds to the paired Prod Gold_SM.",
+    "9. Deploy AGAIN so the rules apply and the Prod items repoint to Prod sources. Rules persist and re-apply on every later deploy, including GitHub Actions."
   ]
 }

@@ -131,7 +131,7 @@ Deploy **all items in one pass** so the pipeline pairs them by name and rewrites
 
 ### Binding options — simplest first
 
-**Option 1 — Deployment rules only (recommended).** Three rules on the Production stage cover everything that doesn't auto-bind (notebook default lakehouse, dataflow parameters, semantic-model data source). No extra items, no code changes. Set once; they re-apply on every deploy. This is Step 12. `deployment_rules/deployment_rules.json` lists the exact values.
+**Option 1 — Deployment rules only (recommended).** Three rules on the Production stage cover everything that doesn't auto-bind (notebook default lakehouse, dataflow parameters, semantic-model data source). No extra items, no code changes. You create them **once** (after the first deploy, since a rule can only attach to an item that already exists in Prod) and they re-apply on every deploy after that. This is Steps 11–13. `deployment_rules/deployment_rules.json` lists the exact values.
 
 **Option 2 — Variable Library + the semantic-model rule.** Move the notebook and dataflow IDs into a Variable Library (`VL_CICD_Bindings`) with a value set per stage, so they resolve **at runtime** with no GUID in code; keep the `Gold_SM` data-source rule (DirectLake can't consume a Variable Library). Choose this only when you want config-as-code or many items share the same IDs. See `variable_library/VL_CICD_Bindings.json`.
 
@@ -139,18 +139,23 @@ Deploy **all items in one pass** so the pipeline pairs them by name and rewrites
 
 **10. Connect Git & commit (Dev)** — Workspace settings → Git integration → GitHub → connect → **Update**, then Source control → select items → **Commit**.
 
-**11. Create the Deployment Pipeline** — Deployment pipelines → New → two stages (**Development → Production**); assign `ws-CICD-Dev` to Development and empty `ws-CICD-Prod` to Production. Select **all** items in Development and **Deploy once** — separate batches don't auto-pair and create duplicates. Copy the **pipeline GUID** from the URL (needed for automation).
+**11. Create the pipeline & do the FIRST deploy** — Deployment pipelines → New → two stages (**Development → Production**); assign `ws-CICD-Dev` to Development and the empty `ws-CICD-Prod` to Production. Select **all** items in Development → **Deploy** (one batch — separate batches don't auto-pair and create duplicates). Copy the **pipeline GUID** from the URL (needed for automation).
 
-**12. Set the three Production-stage deployment rules** — on the **Production** stage click **⚙️ Deployment rules** and add:
-- **`NB_01`/`NB_02`/`NB_03` → Default lakehouse** → map each Dev lakehouse to its matching Prod lakehouse.
-- **`DF_Gold_PA` → Parameters** → `SilverWorkspaceId`/`SilverLakehouseId` = Prod `Silver_LH`.
-- **`Gold_SM` → Data source** → `ws-CICD-Prod/Gold_LH` (DirectLake never auto-binds).
+> **Why deploy before creating rules?** A Fabric deployment rule can only attach to an item that **already exists in the target stage**. Until this first deploy runs, `ws-CICD-Prod` is empty and the **Deployment rules** panel has nothing to configure. So the order is always: **deploy once → set rules → deploy again**. After this first deploy the Prod items exist but a few still point back at Dev — Step 12 fixes that, Step 13 re-applies it.
 
-  That's all. `PL_Refresh_Master`'s activity GUIDs auto-pair and the report autobinds to the paired Prod `Gold_SM` — neither needs a rule. Rules are portal-only (no REST API) and re-apply on every deploy.
+**12. Create the three deployment rules (Production stage)** — in the pipeline, click the **Production** stage. Items that support a rule show a **⚙️ / lightning Deployment rules** icon — click it on each item below, add the rule, **Save**. Only these three need one:
+
+| Artifact | Rule type to add | Set the Production value to |
+| --- | --- | --- |
+| `NB_01`, `NB_02`, `NB_03` (one rule each) | **Default lakehouse** | That notebook's Prod lakehouse in `ws-CICD-Prod` (`NB_01`→`Bronze_LH`, `NB_02`→`Silver_LH`, `NB_03`→`Gold_LH`) |
+| `DF_Gold_PA` | **Parameter** | `SilverWorkspaceId` = `ws-CICD-Prod` ID · `SilverLakehouseId` = Prod `Silver_LH` ID |
+| `Gold_SM` | **Data source** | DirectLake source → `ws-CICD-Prod` / `Gold_LH` |
+
+  **No rule needed:** `PL_Refresh_Master` (activity GUIDs auto-pair) and `Gold_Dashboard` (autobinds to the paired Prod `Gold_SM`). Lakehouses just pair by name. Exact values are in `deployment_rules/deployment_rules.json`. Rules are portal-only (no REST API) and, once set, re-apply automatically on **every** future deploy — you set them once.
 
   *Option 2 (Variable Library):* instead of the notebook + dataflow rules, point those items at `VL_CICD_Bindings` and set the active value set per stage; keep only the `Gold_SM` data-source rule.
 
-**13. Reload data & verify** — lakehouse deploys carry **structure only, no data**:
+**13. Deploy again, reload data & verify** — click **Deploy** once more so the rules apply and the Prod items repoint to Prod sources. Lakehouse deploys carry **structure only, no data**, so then:
 1. **Pairing** — every item shows the chain-link (paired) icon; none "only in source"; no duplicate same-name items.
 2. **Load** — run `PL_Refresh_Master` once in Prod (`NB_Setup → NB_01 → NB_02 → DF_Gold_PA → NB_03`).
 3. **Semantic model** — `Gold_SM` lineage points at **Prod** `Gold_LH`; refresh; `Total BOE` / `Total Cost (USD)` return values.
