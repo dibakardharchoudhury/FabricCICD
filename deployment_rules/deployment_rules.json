@@ -3,18 +3,19 @@
   "_docs": "https://learn.microsoft.com/en-us/fabric/cicd/deployment-pipelines/create-rules",
   "pipeline": "DeployPipeline",
   "_promotion_model": "PRIMARY/SIMPLEST option. Deploy ALL items in a SINGLE pass so the Deployment Pipeline pairs them by name and rewrites internal references (including PL_Refresh_Master's activity GUIDs) to the paired Prod items. The report autobinds to the paired Prod Gold_SM. The three rules below cover the only bindings that do NOT auto-rebind, so Prod has no orphaned GUIDs or datasource names.",
-  "_optional_alternative": "Option 2: move the notebook and dataflow IDs into a Variable Library (variable_library/VL_CICD_Bindings.json) so they resolve at runtime per stage, and keep only the Gold_SM data-source rule below (DirectLake can't consume a Variable Library). Use this only when you want config-as-code or many items share the same IDs.",
+  "_optional_alternative": "Option 2: move the notebook and dataflow IDs into a Variable Library (variable_library/VL_CICD_Bindings.json) so they resolve at runtime per stage, and keep only the Gold_SM parameter rule below (the semantic model is NOT a Variable Library consumer). Use this only when you want config-as-code or many items share the same IDs.",
   "_report_note": "Gold_Dashboard is built in the workspace (live connection to Gold_SM) and promotes through the deployment pipeline. It AUTOBINDS to the paired Prod Gold_SM — no rule and no Git step needed.",
   "rules": [
     {
       "item": "Gold_SM",
       "type": "SemanticModel",
-      "rule": "DataSourceRule",
+      "rule": "ParameterRule",
       "required": true,
-      "description": "REQUIRED — DirectLake semantic models do NOT auto-bind (confirmed: MS Learn understand-the-deployment-process). Binds the model to the stage's Gold_LH. GREYED OUT unless you are the OWNER of the model (docs: 'Configure semantic model rules — you must be the semantic model owner') and the model already exists in the target stage. Parameter rules stay empty for a DirectLake model (no Power Query parameters). Variable Library CANNOT rebind a semantic model — it is not a VL consumer.",
-      "stages": {
-        "Development": { "dataSourceType": "Lakehouse", "connectionPath": "ws-CICD-Dev/Gold_LH" },
-        "Production":  { "dataSourceType": "Lakehouse", "connectionPath": "ws-CICD-Prod/Gold_LH" }
+      "description": "REQUIRED — Gold_SM is Direct Lake on OneLake, which does NOT auto-bind (MS Learn understand-the-deployment-process) AND does NOT support a data-source rule (MS Learn direct-lake-overview limitations: 'Deployment pipeline rules to rebind data source — Not supported directly; can create a parameter expression to use in the connection string'). So rebind via a Text PARAMETER rule on the connection-string parameters (WorkspaceId/LakehouseId), NOT a data-source rule. GREYED OUT unless you are the OWNER of the cloned model — the deploying identity becomes owner; if someone/something else deployed it, take ownership in ws-CICD-Prod (Gold_SM → Settings → Take over) before the rule pane is editable. The model's connection must be parameterized first. Parameter rules must be type Text. Variable Library CANNOT rebind a semantic model.",
+      "prerequisite": "Parameterize the model connection: replace hard-coded Dev workspace/lakehouse GUIDs with Text parameters (WorkspaceId, LakehouseId) via TMDL/XMLA or web modeling, then deploy and take ownership.",
+      "parameters": {
+        "Development": { "WorkspaceId": "<dev-workspace-id>", "LakehouseId": "<dev-gold-lakehouse-id>" },
+        "Production":  { "WorkspaceId": "<prod-workspace-id>", "LakehouseId": "<prod-gold-lakehouse-id>" }
       }
     },
     {
