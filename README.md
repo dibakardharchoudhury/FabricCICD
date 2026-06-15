@@ -57,9 +57,11 @@ fabric-cicd-demo/
 │   └── deploy-test-to-prod.yml     — Manual production deployment with approval
 │
 ├── scripts/
-│   ├── 01_setup_fabric_workspaces.py   — Create workspaces + lakehouses via REST API
-│   ├── 02_connect_git_integration.py   — Connect PAB-Dev to GitHub via REST API
-│   └── 03_create_deployment_pipeline.py — Create pipeline + assign workspaces
+│   ├── 01_setup_fabric_workspaces.py     — Create workspaces + lakehouses via REST API
+│   ├── 02_connect_git_integration.py     — Connect PAB-Dev to GitHub via REST API
+│   ├── 03_create_deployment_pipeline.py  — Create pipeline + assign workspaces
+│   └── 04_bind_lakehouses_to_notebooks.py — Inject the workspace's live lakehouse
+│                                            GUIDs into each notebook (GUID-free repo)
 │
 └── deployment_rules/
     └── deployment_rules.json       — Deployment rules reference (configure in UI)
@@ -125,15 +127,35 @@ Connect the workspace to this repo (**Workspace settings → Git integration**),
 **Source control → Update** to bring the notebooks into the workspace. No manual
 `.py` import is needed.
 
-### Step 4 — Attach all three lakehouses to every notebook ⚠️
-Open each notebook (`NB_01`, `NB_02`, `NB_03`) and in the **Explorer / Lakehouses**
-pane add **all three** lakehouses (`Bronze_LH`, `Silver_LH`, `Gold_LH`), then set
-**one as the default**. Without this, `saveAsTable("Silver_LH.…")` and cross-lakehouse
-reads will fail with `[SCHEMA_NOT_FOUND]`.
+### Step 4 — Bind the lakehouses to the notebooks ⚠️
+Fabric notebooks reference attached lakehouses by **runtime object GUID**, and those
+GUIDs are unique to each workspace and change whenever a workspace/lakehouse is
+recreated. They are therefore **not** committed to Git — the notebooks ship with an
+empty `"dependencies": {}` block. You must bind the lakehouses **once per workspace**
+after every Git sync / deployment (Dev, Test, Prod). Two ways:
 
-`NB_00_Setup_Environment` does not need a lakehouse attached — it only verifies the
-lakehouses exist in the workspace it is running in. Open it and confirm
-`WORKSPACE_NAME` matches your workspace before running.
+**Automated (recommended) — `scripts/04_bind_lakehouses_to_notebooks.py`:**
+```bash
+# Edit TENANT_ID / CLIENT_ID / CLIENT_SECRET and WORKSPACE_NAME (or WORKSPACE_ID)
+python scripts/04_bind_lakehouses_to_notebooks.py
+```
+It resolves `Bronze_LH` / `Silver_LH` / `Gold_LH` **by name** in the target workspace,
+then writes the live GUIDs into `NB_01` / `NB_02` / `NB_03` via the Fabric REST
+`updateDefinition` API (all three attached; default = Bronze/Silver/Gold respectively).
+It is idempotent and never hardcodes a GUID in source control.
+
+**Manual (Fabric UI):** open each notebook (`NB_01`, `NB_02`, `NB_03`) and in the
+**Explorer / Lakehouses** pane add **all three** lakehouses, then set **one as the
+default**. Without this, `saveAsTable("Silver_LH.…")` and cross-lakehouse reads fail
+with `[SCHEMA_NOT_FOUND]`.
+
+> ⚠️ **Do not commit the bound GUIDs back to Git.** If you commit from the workspace
+> after binding, re-strip the `dependencies` block (or just don't stage those metadata
+> lines) so the repo stays workspace-portable.
+
+`NB_00_Setup_Environment` needs no lakehouse — it only verifies the lakehouses exist
+in the workspace it runs in. Open it and confirm `WORKSPACE_NAME` matches your
+workspace before running.
 
 ### Step 5 — Run the notebooks in order
 1. `NB_00_Setup_Environment` — confirms `Bronze_LH`, `Silver_LH`, `Gold_LH` exist
@@ -179,10 +201,15 @@ Copy `github_actions/*.yml` to `.github/workflows/` in your repo.
 
 ### Step 10 — Refresh data after deployment
 Lakehouse deployments copy **structure only, not data**. After the pipeline deploys
-to Test/Prod, repopulate the target workspace by either:
-- running the notebooks `NB_01` → `NB_02` → `NB_03` in that workspace, **or**
-- running the **`PL_Refresh_Master`** data pipeline once (does all three + semantic
-  model refresh in one click — the recommended option for Test/Prod).
+to Test/Prod:
+1. **Bind the lakehouses** in the target workspace — run
+   `python scripts/04_bind_lakehouses_to_notebooks.py` (set `WORKSPACE_NAME` to the
+   Test/Prod workspace). Deployed notebooks arrive with an empty `dependencies` block,
+   so they need their lakehouses re-bound to that workspace's GUIDs before they run.
+2. **Repopulate** the target workspace by either:
+   - running the notebooks `NB_01` → `NB_02` → `NB_03` in that workspace, **or**
+   - running the **`PL_Refresh_Master`** data pipeline once (does all three + semantic
+     model refresh in one click — the recommended option for Test/Prod).
 
 ### Step 11 — Demo the CI/CD Loop
 1. Open `NB_02_Transform_Silver` in your dev workspace
@@ -205,3 +232,4 @@ to Test/Prod, repopulate the target workspace by either:
 | Deploy | Lakehouse deploys structure only (no data) | Run refresh pipeline after each deploy |
 | Deploy | Semantic models require Enhanced Metadata (mandatory Feb 2026) | Always publish from modern PBI Desktop |
 | Deploy | Same-name unpaired items create duplicates | Verify pairing in pipeline UI before deploying |
+| Notebook | Attached-lakehouse GUIDs are workspace-specific and change on recreate | Keep `dependencies` empty in Git; run `scripts/04_bind_lakehouses_to_notebooks.py` per workspace |
