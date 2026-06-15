@@ -11,11 +11,15 @@
 #
 # It also CREATES the Variable Library itself on first run (idempotent bootstrap), so the
 #   whole CI/CD binding layer — library + all three bindings — is provisioned from here.
+#   It also folds in the old NB_00_Setup_Environment: a pre-flight check verifies the three
+#   lakehouses exist in this workspace, so NB_00 is no longer needed.
 #
 # What it does (all binding values come from VL_CICD_Bindings, never hardcoded):
 #   0. Variable Library VL_CICD_Bindings -> created if missing (4 String vars, Dev/Prod sets)
 #   0b. Active value set -> switched to match THIS workspace (dev->Development, prod->Production)
 #        so getLibrary() returns Dev IDs in Dev and Prod IDs in Prod automatically.
+#   0c. Pre-flight -> verifies Bronze_LH / Silver_LH / Gold_LH exist in THIS workspace
+#        (folded in from NB_00_Setup_Environment; fails fast if any is missing).
 #   1. Notebooks NB_01/02/03 -> ALL three lakehouses attached; DEFAULT = Bronze/Silver/Gold
 #        for NB_01/NB_02/NB_03 respectively (this stage).
 #   2. Dataflow  DF_Gold_PA    -> parameters  SilverWorkspaceId / SilverLakehouseId
@@ -182,7 +186,7 @@ else:
     print(f"→ Variable Library '{VL_NAME}' already exists — reused as the source of truth.")
 
 # Cell 5 — Activate the value set that matches THIS workspace (dev->Development, prod->Production)
-# THIS is what makes "dev values in Dev, prod values in Prod" happen. getLibrary() (Cell 6)
+# THIS is what makes "dev values in Dev, prod values in Prod" happen. getLibrary() (Cell 7)
 # returns whichever value set is ACTIVE, so before reading we flip the active set to match the
 # workspace this notebook is running in. Running NB_04 as the first pipeline activity per stage
 # therefore self-selects the correct IDs — no manual step and no deployment rule required.
@@ -206,7 +210,22 @@ else:
     print(f"⚠ Workspace '{CURRENT_WS_NAME}' is neither the Dev nor Prod name in Cell 1 — "
           f"leaving the active value set unchanged.")
 
-# Cell 6 — Read the now-active Variable Library value set (single source of truth)
+# Cell 6 — Pre-flight: verify the three lakehouses exist in THIS workspace
+# Folds in the former NB_00_Setup_Environment. Lakehouses are created by workspace setup
+# (deployment pipeline / manual), not by this notebook — so fail fast with a clear message
+# if any is missing before doing any binding work. Names are identical in every stage.
+_expected_lakehouses = [bronze_lakehouse_name, silver_lakehouse_name, gold_lakehouse_name]
+_present_lakehouses  = {lh.displayName for lh in notebookutils.lakehouse.list(CURRENT_WS_ID)}
+_missing_lakehouses  = [n for n in _expected_lakehouses if n not in _present_lakehouses]
+if _missing_lakehouses:
+    raise ValueError(
+        f"Lakehouse(s) missing in workspace '{CURRENT_WS_NAME}': {', '.join(_missing_lakehouses)}.\n"
+        f"  - Create them in Fabric before running this notebook.\n"
+        f"  Lakehouses present: {', '.join(sorted(_present_lakehouses)) or '(none)'}"
+    )
+print(f"→ Lakehouses verified in '{CURRENT_WS_NAME}': {', '.join(_expected_lakehouses)}.")
+
+# Cell 7 — Read the now-active Variable Library value set (single source of truth)
 # Notebooks are a Variable Library consumer via NotebookUtils. getLibrary resolves the value
 # set we just activated, so these are the CURRENT stage's IDs (Dev in Dev, Prod in Prod).
 try:
@@ -241,7 +260,7 @@ if CURRENT_WS_ID and WORKSPACE_ID != CURRENT_WS_ID:
         f"  - Re-run after confirming the Dev/Prod workspace names in Cell 1 are correct."
     )
 
-# Cell 7 — (1) Attach ALL THREE lakehouses to every notebook; set the stage-appropriate DEFAULT
+# Cell 8 — (1) Attach ALL THREE lakehouses to every notebook; set the stage-appropriate DEFAULT
 # The lakehouse binding lives in the notebook metadata ("dependencies.lakehouse"):
 #   - default_lakehouse / _name / _workspace_id  -> the ONE default (Bronze for NB_01,
 #     Silver for NB_02, Gold for NB_03 — so each writes to its own layer by default), and
@@ -275,7 +294,7 @@ for nb_name, (lh_name, lh_id) in notebook_to_default.items():
         labs.notebook.update_notebook_definition(name=nb_name, notebook_content=src, workspace=WORKSPACE_ID)
     print(f"→ {nb_name}: default {lh_name}, attached Bronze_LH + Silver_LH + Gold_LH.")
 
-# Cell 8 — (2) Bind Dataflow Gen2 DF_Gold_PA parameters to this stage's Silver lakehouse
+# Cell 9 — (2) Bind Dataflow Gen2 DF_Gold_PA parameters to this stage's Silver lakehouse
 # DF Gen2 can't be rebound by a data-source rule; its parameters carry the IDs. We patch
 # the parameter DEFAULT literals inside the dataflow's mashup definition via REST.
 # Both Silver IDs live in this stage's single workspace, so SilverWorkspaceId = WorkspaceId.
@@ -317,7 +336,7 @@ else:
     print(f"⚠ {DATAFLOW_NAME}: no matching parameter literals found — verify parameter names "
           f"({', '.join(param_values)}) exist in the dataflow.")
 
-# Cell 9 — (3) Rebind Gold_SM (Direct Lake ON ONELAKE) to this stage's Gold_LH
+# Cell 10 — (3) Rebind Gold_SM (Direct Lake ON ONELAKE) to this stage's Gold_LH
 # A data-source deployment rule is NOT supported for Direct Lake on OneLake; instead we
 # regenerate the model's connection in code (the "connection-string parameter" the docs
 # mention). use_sql_endpoint=False == Direct Lake OVER ONELAKE (not the SQL endpoint).
@@ -332,7 +351,7 @@ with _quiet():
     )
 print("→ Gold_SM: Direct Lake on OneLake connection set to this stage's Gold_LH.")
 
-# Cell 10 — Summary (concise, stage-aware)
+# Cell 11 — Summary (concise, stage-aware)
 _line = "─" * 64
 print()
 print("═" * 64)
@@ -349,4 +368,4 @@ print(_line)
 print(f"  DF_Gold_PA   -> Silver_LH params {'set' if DF_BOUND else 'UNCHANGED (check names)'}")
 print("  Gold_SM      -> Gold_LH (Direct Lake on OneLake)")
 print("═" * 64)
-print("  Next: NB_Setup -> NB_01 -> NB_02 -> DF_Gold_PA -> NB_03 now load THIS stage.")
+print("  Next: NB_01 -> NB_02 -> DF_Gold_PA -> NB_03 now load THIS stage.")
