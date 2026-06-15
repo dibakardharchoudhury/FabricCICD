@@ -40,10 +40,12 @@ fabric-cicd-demo/
 │     (each is a Fabric Git folder: .platform + notebook-content.py)
 │
 ├── pipelines/
-│   └── PL_Refresh_Master.json      — Single end-to-end orchestration (NB_01 → NB_02 → DF_Gold_PA → NB_03 → Refresh SM)
+│   ├── PL_Refresh_Master.json      — Single end-to-end orchestration (NB_01 → NB_02 → DF_Gold_PA → NB_03 → Refresh SM)
+│   └── PL_Refresh_Master.zip       — Same pipeline as a Fabric Import template (Home → Import from a template)
 │
 ├── dataflows/
-│   └── DF_Gold_PA.m              — Power Query M: Silver → Gold production_daily (the one Gold table NB_03 does not build)
+│   ├── DF_Gold_PA.m              — Power Query M: Silver → Gold production_daily (the one Gold table NB_03 does not build)
+│   └── DF_Gold_PA.pqt            — Same dataflow as a Power Query template (Get data → Import from a Power Query template)
 │
 ├── semantic_model/
 │   ├── Gold_SM.bim               — TMSL model definition (4 tables, 15+ measures)
@@ -75,8 +77,9 @@ makes every step below clear:
   (as a built-in **Dataflow** activity) before `NB_03` because it builds the Gold
   `production_daily` table that `NB_03`'s KPI cell joins. **Run this one pipeline for a
   full, one-click end-to-end refresh** — especially after a deployment, because lakehouse
-  deploys carry structure but no data. It is parameterized by `Environment` /
-  `WorkspaceId` / `SemanticModelId` so the *same* pipeline works in Dev and Prod.
+  deploys carry structure but no data. It carries an `Environment` parameter (`dev` by
+  default) and resolves its workspace at run time via `@pipeline().DataFactory`, so the
+  *same* pipeline works in Dev and Prod once its activities point at each workspace's items.
 
 > **Which do I run to load data?**
 > - Simplest demo → run the **notebooks** `NB_01`→`NB_03`, plus the **`DF_Gold_PA`**
@@ -177,26 +180,27 @@ ARM-style `<Name>.json`). Bring the pipeline in one of two ways:
 - **Via Git (recommended):** the `.json` definition arrives automatically when you sync
   the repo in Step 10 — Fabric materializes it into a real pipeline item. No manual
   import needed.
-- **Via template Import:** **New → Data pipeline → Home → Import**, pick
-  `pipelines/PL_Refresh_Master.zip`, then **map the template parameters** to your
-  workspace: bind the three notebook parameters (`NB_01_Seed_Bronze`,
-  `NB_02_Transform_Silver`, `NB_03_Aggregate_Gold`), the dataflow parameter `DF_Gold_PA`,
-  and `SemanticModel_Gold` to the items you create in Steps 5, 7, and 8.
+- **Via template Import:** **New → Data pipeline → Home → Import from a template**, pick
+  `pipelines/PL_Refresh_Master.zip`. The pipeline imports with all five activities and the
+  correct ordering already wired up.
 
-> 📌 A Fabric template `.zip` is **not** the raw Git `.json` — it wraps the pipeline in an
-> ARM deployment template (`parameters` / `resources`) with datasets inlined and
-> notebooks/dataflow/semantic-model surfaced as parameters. If your tenant's **Import**
-> rejects a template, fall back to **Git integration (Step 10)**, which always works for
+> 📌 **After importing, re-bind the activities to your items.** Fabric pipeline templates
+> reference notebooks/dataflows/semantic models by **item GUID**, and a template can't know
+> the GUIDs in *your* workspace, so they ship as placeholder GUIDs
+> (`00000000-0000-0000-0000-000000000000`). Open each activity and pick the matching item:
+> the three **Notebook** activities → `NB_01_Seed_Bronze`, `NB_02_Transform_Silver`,
+> `NB_03_Aggregate_Gold`; the **Dataflow** activity → `DF_Gold_PA`; the **Semantic model
+> refresh** activity → `Gold_SM`. `workspaceId` resolves automatically via
+> `@pipeline().DataFactory`, so you don't set it by hand. If your tenant's **Import**
+> rejects the template, fall back to **Git integration (Step 10)**, which always works for
 > this exact definition.
 
 Then open **`PL_Refresh_Master`** — it chains
 `NB_01 → NB_02 → DF_Gold_PA → NB_03 → Refresh Gold_SM`, with each step gated on the
-previous one. Leave `Environment = dev`; the `WorkspaceId` / `SemanticModelId` parameters
-are set per stage by Deployment Rules. Run it once for a one-click end-to-end refresh.
+previous one. Leave `Environment = dev`. Run it once for a one-click end-to-end refresh.
 
-> The `SemanticModelId` parameter stays empty until you create the semantic model in
-> Step 8 — fill it in (or set it via Deployment Rules) afterwards so the refresh
-> activity can find the model.
+> Bind the **Semantic model refresh** activity only after you create the semantic model in
+> Step 8 — until then its item picker has nothing to point at.
 
 ### Step 7 — Build the Gold Dataflow Gen2 (`DF_Gold_PA`) — required
 `dataflows/DF_Gold_PA.m` is the Power Query M script for the **one** dataflow in this
@@ -211,7 +215,25 @@ KPI tables). This step is **not optional**: build and run `DF_Gold_PA` before `N
 > **data destination** (here, the lakehouse). The `DF_Gold_PA.m` file is the Power Query
 > script behind the dataflow — you paste it into the editor below.
 
-**Create the dataflow:**
+This repo ships the dataflow in **two formats** — pick whichever you prefer:
+
+| File | Use it for |
+| --- | --- |
+| `dataflows/DF_Gold_PA.pqt` | **One-click import** — a real Power Query **template** (`Get data → Import from a Power Query template`) |
+| `dataflows/DF_Gold_PA.m` | Manual paste into the Advanced editor (fallback / to read the logic) |
+
+**Option A — Import the Power Query template (`.pqt`, fastest):**
+
+1. In your workspace, **+ New item → Dataflow Gen2**. Name it **`DF_Gold_PA`**.
+2. In the Power Query editor, **Get data → Import from a Power Query template** and select
+   `dataflows/DF_Gold_PA.pqt`. Both queries (`SilverProduction`, `GoldProductionDaily`)
+   load in already wired together.
+3. Confirm/select your **`Silver_LH`** lakehouse if prompted (the source reads
+   `Silver_LH.production_conformed`).
+4. Set the **data destination** on **`GoldProductionDaily`** → **Lakehouse** → `Gold_LH` →
+   table **`production_daily`**, **Update method = Replace**, then **Publish**.
+
+**Option B — Paste the M manually:**
 
 1. In your workspace, click **+ New item** → search **Dataflow Gen2** → select it (or use
    **New → More options → Data Factory → Dataflow Gen2**). Name it **`DF_Gold_PA`**.

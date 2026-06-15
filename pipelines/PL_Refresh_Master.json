@@ -97,7 +97,7 @@
       },
       {
         "name": "Refresh_Semantic_Model",
-        "type": "RefreshDataset",
+        "type": "TridentDatasetRefresh",
         "dependsOn": [
           {
             "activity": "NB_Aggregate_Gold",
