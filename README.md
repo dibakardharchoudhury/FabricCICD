@@ -198,15 +198,50 @@ Then:
 > activity can find the model.
 
 ### Step 7 — (Optional) Build the Dataflows Gen2
-The `dataflows/*.m` files are Power Query M scripts that show the dataflow-based path
-for each Medallion layer (`DF_Bronze_*`, `DF_Silver_*`, `DF_Gold_*`). They are an
-alternative to the notebooks — skip them if you built the data with notebooks in Step 5.
+The `dataflows/*.m` files are Power Query M scripts that show the **dataflow-based** path
+for the Medallion layers (`DF_Bronze_Production`, `DF_Silver_PA`, `DF_Gold_PA`). They're
+an alternative to the notebooks — **skip this whole step** if you already built the data
+with notebooks in Step 5. They're here to demonstrate the low-code ingestion option.
 
-To use them: **New → Dataflow Gen2 → Edit in advanced editor**, paste the M from the
-matching `.m` file, then update the connection. The scripts ship with a placeholder
-SharePoint URL (`https://yourorg.sharepoint.com/…`); switch it to your SharePoint site
-or the commented `Lakehouse.Contents("Bronze_LH")` OneLake path for a no-SharePoint demo.
-Set each dataflow's **data destination** to the target lakehouse and table.
+> ℹ️ **What is a Dataflow Gen2?** It's Fabric's low-code ETL item built on Power Query.
+> You connect to a source, transform with the Power Query editor (or M code), and set a
+> **data destination** (here, the lakehouse). Each `.m` file is the Power Query script
+> behind one dataflow.
+
+**Create one dataflow (repeat for each `.m` file):**
+
+1. In your workspace, click **+ New item** → search **Dataflow Gen2** → select it (or use
+   **New → More options → Data Factory → Dataflow Gen2**). Name it after the file, e.g.
+   `DF_Bronze_Production`.
+2. The Power Query editor opens. You now need a query to paste the M into:
+   - Click **Get data → Blank query** (under *Other* ), **or**
+   - If you see the *Home* ribbon, click **Get data → Blank query**.
+3. In the blank query, open the **Advanced editor**: *Home* ribbon → **Advanced editor**
+   (or right-click the query in the left **Queries** pane → **Advanced editor**).
+4. **Delete the default snippet**, then paste the body of the matching `.m` file. ⚠️ Paste
+   only the `let … in …` expression for the query — **not** the `section …;` line or the
+   `shared QueryName =` prefix (those are file-packaging syntax, not valid in the editor).
+   For `DF_Bronze_Production.m`, paste from `let` through the final `FinalTable;`.
+5. Click **OK**. Fix the **source connection** when prompted:
+   - **SharePoint path (default in the script):** replace `https://yourorg.sharepoint.com/…`
+     with your real SharePoint site and sign in when asked.
+   - **No-SharePoint demo:** comment out the SharePoint lines and uncomment the
+     `Lakehouse.Contents("Bronze_LH")` block in the `.m` file so it reads the CSV that
+     `NB_00` uploaded to **OneLake Files**.
+6. Set the **data destination** (bottom-right **Data destination** ⊕, or the gear on the
+   last applied step): choose **Lakehouse** → pick the target lakehouse and table:
+   - `DF_Bronze_Production` → `Bronze_LH` table `production_raw`
+   - `DF_Silver_PA` → `Silver_LH` (the silver table the script builds)
+   - `DF_Gold_PA` → `Gold_LH` (the gold table the script builds)
+
+   Set **Update method = Append** for incremental loads (or **Replace** for a full refresh),
+   map the columns, and confirm.
+7. Click **Publish** (bottom-right). Fabric saves and runs the dataflow; refresh it any
+   time from the workspace list (**⋯ → Refresh**) to reload the lakehouse table.
+
+> 💡 Prefer pasting M one query at a time. If a `.m` file defines several `shared`
+> queries, create one **Blank query** per query and paste each `let … in …` body
+> separately, then wire the destination on the final output query.
 
 ### Step 8 — Create the semantic model (`Gold_SM`)
 `semantic_model/Gold_SM.bim` is a TMSL model over the Gold layer using **DirectLake**.
