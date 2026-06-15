@@ -208,16 +208,13 @@ KPI tables). This step is **not optional**: build and run `DF_Gold_PA` before `N
 
 > ℹ️ **What is a Dataflow Gen2?** It's Fabric's low-code ETL item built on Power Query.
 > You connect to a source, transform with the Power Query editor (or M code), and set a
-> **data destination** (here, the lakehouse). The `.m` file is the Power Query script
-> behind the dataflow; `DF_Gold_PA.pqt` is the same logic packaged for **Import from a
-> Power Query template**.
+> **data destination** (here, the lakehouse). The `DF_Gold_PA.m` file is the Power Query
+> script behind the dataflow — you paste it into the editor below.
 
 **Create the dataflow:**
 
 1. In your workspace, click **+ New item** → search **Dataflow Gen2** → select it (or use
    **New → More options → Data Factory → Dataflow Gen2**). Name it **`DF_Gold_PA`**.
-   *(Or use **Import from a Power Query template** and pick `dataflows/DF_Gold_PA.pqt` to
-   load the queries in one shot, then jump to step 6 to set the destination.)*
 2. The Power Query editor opens. You now need a query to paste the M into:
    - Click **Get data → Blank query** (under *Other* ), **or**
    - If you see the *Home* ribbon, click **Get data → Blank query**.
