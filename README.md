@@ -87,7 +87,7 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
   Quarter    = "Q" & QUARTER([Date])
   WeekNumber = WEEKNUM([Date])
   ```
-  Mark `DateDim[Date]` as the date key (Column tools → **Mark as date table** → `Date`).
+  Mark `DateDim[Date]` as the date key — in **Power BI Desktop** select the column → Column tools → **Mark as date table** → `Date`. In the **Fabric web editor** there's no such option (and it isn't required here); the model works from the relationship below.
 
   **b. Relationship** — drag `production_daily[date]` → `DateDim[Date]` (many-to-one, **single** cross-filter direction).
 
