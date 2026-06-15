@@ -89,7 +89,11 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
   ```
   Mark `DateDim[Date]` as the date key — in **Power BI Desktop** select the column → Column tools → **Mark as date table** → `Date`. In the **Fabric web editor** there's no such option (and it isn't required here); the model works from the relationship below.
 
-  **b. Relationship** — drag `production_daily[date]` → `DateDim[Date]` (many-to-one, **single** cross-filter direction).
+  **b. Relationships** — the model has exactly **two**:
+  - `production_daily[date]` → `DateDim[Date]` (many-to-one, **single** direction, **active**) — drives all time slicing.
+  - `production_daily[field]` → `field_kpi_facts[field]` (many-to-one, single, **inactive**) — kept for `USERELATIONSHIP`, off by default.
+
+  `cost_monthly` and `schedule_summary` are **intentionally not related** — they're pre-aggregated at different grains (monthly / by priority) and each visual slices them by their own `field` / `cost_type` / `priority` columns. Joining the summary tables on `field` would fan out into ambiguous many-to-many and inflate sums. To enable one `field` slicer across all tables, add a `DimField` dimension (one row per field) and relate `DimField[field]` 1→* to each table — that's an optional star-schema enhancement, not part of this demo.
 
   **c. Measures** — create on the table shown in parentheses (right-click table → **New measure**). These are the headline ones used by the report; the `.bim` has more:
   ```DAX
