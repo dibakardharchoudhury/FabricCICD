@@ -157,21 +157,32 @@ demo, or continue to Part B to add the pipelines, semantic model, and report.
 
 ### Step 6 — Import & run the data pipelines
 The two Data Factory pipelines in `pipelines/` give you orchestration and file-based
-ingestion (pipeline type #1). The `.json` files here are **Git-integration item
-definitions**, so bring them into the workspace one of two ways:
+ingestion (pipeline type #1). This repo ships each pipeline in **two formats**:
 
-- **Via Git (recommended):** they arrive automatically when you sync the repo in
-  Step 10 — Fabric materializes the `.json` definitions into real pipeline items. This
-  is the supported path for the files in this repo and needs no manual import.
-- **Rebuild on the canvas:** **New → Data pipeline** and recreate the activities, using
-  the `pipelines/*.json` here as the reference for activities, dependencies, and
-  parameters.
+| File | Use it for |
+| --- | --- |
+| `PL_*.json` | Git-integration item definitions (the source of truth synced in Step 10) |
+| `PL_*.zip` | **Fabric template** packages for the pipeline editor's **Home → Import** button |
 
-> 📌 The pipeline editor's **Home → Import** button only accepts a template `.zip` that
-> Fabric itself produces via **Home → Export** — its internal format is service-generated
-> and can't be hand-built from the raw `.json`. So don't try to feed these `.json` files
-> (or a manually-zipped version of them) into the **Import** dialog; use **Git
-> integration (Step 10)** to bring these exact definitions in unchanged.
+The `.zip` files are real Fabric pipeline **templates** (the same structure Fabric itself
+produces via **Home → Export**: a `<Name>/` folder with `manifest.json` + an
+ARM-style `<Name>.json`). Bring the pipelines in one of two ways:
+
+- **Via Git (recommended):** the `.json` definitions arrive automatically when you sync
+  the repo in Step 10 — Fabric materializes them into real pipeline items. No manual
+  import needed.
+- **Via template Import:** **New → Data pipeline → Home → Import**, pick the matching
+  `pipelines/*.zip`, then **map the template parameters** to your workspace:
+  - `PL_Copy_Bronze_Ingest.zip` → bind **`LH_Bronze`** to your `Bronze_LH` lakehouse.
+  - `PL_Refresh_Master.zip` → bind the three notebook parameters (`NB_01_Seed_Bronze`,
+    `NB_02_Transform_Silver`, `NB_03_Aggregate_Gold`) and `SemanticModel_Gold` to the
+    items you create in Steps 5 and 8.
+
+> 📌 A Fabric template `.zip` is **not** the raw Git `.json` — it wraps the pipeline in an
+> ARM deployment template (`parameters` / `resources`) with datasets inlined and
+> connections/lakehouses surfaced as parameters. If your tenant's **Import** rejects a
+> template, fall back to **Git integration (Step 10)**, which always works for these
+> exact definitions.
 
 Then:
 1. Open **`PL_Copy_Bronze_Ingest`** — point its source at the CSVs in **OneLake Files**
@@ -198,29 +209,58 @@ or the commented `Lakehouse.Contents("Bronze_LH")` OneLake path for a no-SharePo
 Set each dataflow's **data destination** to the target lakehouse and table.
 
 ### Step 8 — Create the semantic model (`Gold_SM`)
-`semantic_model/Gold_SM.bim` is a TMSL model (4 tables, 15+ measures) over the Gold
-layer using **DirectLake**. Create it one of two ways:
+`semantic_model/Gold_SM.bim` is a TMSL model over the Gold layer using **DirectLake**.
+It defines **4 tables** — `production_daily`, `cost_monthly`, `schedule_summary`, and a
+`DateDim` date table — related on `date`, with measures including `Total BOE`,
+`Total Oil (Bbl)`, `Total Gas (Mcf)`, `Avg Water Cut %`, `Active Wells`,
+`Total Cost (USD)`, `Avg Cost per BOE`, and `Total Activities`.
 
-- **From Fabric (fastest):** open `Gold_LH` → **New semantic model**, select the Gold
-  tables (`production_daily`, plus the cost / schedule / KPI tables), name it `Gold_SM`.
-  Then add the measures from the `.bim` (e.g. `Total BOE`, `Total Oil (Bbl)`,
-  `Avg Water Cut %`) in the model view.
-- **From the `.bim` (full fidelity):** open `Gold_SM.bim` in **Tabular Editor** or
-  modern **Power BI Desktop**, point the DirectLake source at this workspace's
-  `Gold_LH` SQL endpoint, and publish as `Gold_SM`.
+Create it one of three ways:
+
+- **From Fabric (fastest, click-through):**
+  1. Open **`Gold_LH`** → top ribbon **New semantic model**.
+  2. Name it **`Gold_SM`** and tick the Gold tables (`production_daily`, `cost_monthly`,
+     `schedule_summary`, `DateDim`). Click **Confirm** — this creates a DirectLake model.
+  3. Open the model → **Model view** → drag `DateDim[Date]` to each fact table's `date`
+     column to create the relationships (single-direction, one-to-many from `DateDim`).
+  4. Add the measures: select a table → **New measure** → paste each DAX expression from
+     `Gold_SM.bim` (e.g. `Total BOE = SUM(production_daily[total_boe])`).
+
+- **From the `.bim` (full fidelity, recommended for the demo):**
+  1. Open **`Gold_SM.bim`** in **Tabular Editor 2/3** (or modern **Power BI Desktop**).
+  2. Point the DirectLake source/expression at **this workspace's `Gold_LH` SQL
+     analytics endpoint** (update the connection/`expressions` to your workspace + LH).
+  3. **Save to / Deploy** to the workspace as **`Gold_SM`** (Tabular Editor:
+     *Model → Deploy*; Power BI Desktop: **Publish**).
+
+- **Via Git (hands-off):** the `.bim` + `definition.pbism` sync in with the repo in
+  Step 10 and the model is created automatically — just rebind its DirectLake source to
+  the target workspace's `Gold_LH` after the first sync.
 
 > Publish from **modern Power BI Desktop / Tabular Editor** so the model has **Enhanced
-> Metadata** — it's mandatory for Deployment Pipelines (see Limitations). Note the
-> model's GUID and use it for the `SemanticModelId` pipeline parameter / Deployment Rule.
+> Metadata** — it's mandatory for Deployment Pipelines (see Limitations). Copy the
+> model's **GUID** (workspace → model → *Settings*, or the item URL) and use it for the
+> `SemanticModel_Gold` template parameter / `SemanticModelId` Deployment Rule so
+> `PL_Refresh_Master`'s refresh activity can find it.
 
 ### Step 9 — Build the Power BI report (`Gold_Dashboard`)
-With `Gold_SM` published, build the report:
-1. In the workspace: **New → Report → pick a published semantic model → `Gold_SM`**
-   (or in Power BI Desktop, **Get data → Power BI semantic models → Gold_SM** in
-   Live-connect mode — never import, so it stays DirectLake).
-2. Add visuals over the measures — e.g. *Total BOE* by `field`, *Avg Water Cut %*
-   trend by `date`, an `active_well_count` card, and a cost-vs-production combo.
-3. Save / publish it to the workspace as **`Gold_Dashboard`**.
+With `Gold_SM` published, build the report on top of it:
+
+1. **Create the report (live, DirectLake):**
+   - In the workspace: **New → Report → pick a published semantic model → `Gold_SM`**, or
+   - In **Power BI Desktop**: **Get data → Power BI semantic models → `Gold_SM`** in
+     **Live connect** mode — never *Import*, so the report stays DirectLake.
+2. **Add visuals over the measures**, for example:
+   - **Card** — `Total BOE` and `Active Wells` (production health at a glance).
+   - **Line chart** — `Avg Water Cut %` by `DateDim[Date]` (trend).
+   - **Clustered column** — `Total Oil (Bbl)` and `Total Gas (Mcf)` by `field`.
+   - **Combo chart** — `Total Cost (USD)` vs `Total BOE` by month (cost efficiency).
+   - **KPI / table** — `Avg Cost per BOE` and `Total Activities`.
+3. **Save / publish** it to the workspace as **`Gold_Dashboard`**.
+
+> Keep the report in **Live connect / DirectLake** (no imported tables) so it promotes
+> cleanly through the Deployment Pipeline and always reflects the latest Gold data after
+> `PL_Refresh_Master` runs.
 
 After Part B the workspace holds every item the Deployment Pipeline will promote:
 lakehouses, notebooks, data pipelines, dataflows, the semantic model, and the report.
