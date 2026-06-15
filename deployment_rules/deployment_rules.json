@@ -1,0 +1,76 @@
+{
+  "_comment": "Deployment Rules for PAB_DeployPipeline — configure these in Fabric UI: Pipeline → ⚙️ Deployment Rules",
+  "_docs": "https://learn.microsoft.com/en-us/fabric/cicd/deployment-pipelines/create-rules",
+  "pipeline": "PAB_DeployPipeline",
+  "rules": [
+    {
+      "item": "PL_Refresh_Master",
+      "type": "DataPipeline",
+      "rule": "PipelineParameter",
+      "description": "Sets the Environment parameter per stage",
+      "stages": {
+        "Development": { "Environment": "dev" },
+        "Test":        { "Environment": "test" },
+        "Production":  { "Environment": "prod" }
+      }
+    },
+    {
+      "item": "PL_Refresh_Master",
+      "type": "DataPipeline",
+      "rule": "PipelineParameter",
+      "description": "Sets the SemanticModelId per stage (PAB_Gold_SM GUID differs by workspace)",
+      "stages": {
+        "Development": { "SemanticModelId": "<DEV_PAB_GOLD_SM_GUID>" },
+        "Test":        { "SemanticModelId": "<TEST_PAB_GOLD_SM_GUID>" },
+        "Production":  { "SemanticModelId": "<PROD_PAB_GOLD_SM_GUID>" }
+      }
+    },
+    {
+      "item": "DF_Bronze_Production",
+      "type": "DataflowGen2",
+      "rule": "DataSourceRule",
+      "description": "Points Bronze Dataflow at the correct SharePoint environment",
+      "stages": {
+        "Development": {
+          "dataSourceType": "SharePoint",
+          "connectionId":   "<DEV_SHAREPOINT_CONNECTION_ID>"
+        },
+        "Test": {
+          "dataSourceType": "SharePoint",
+          "connectionId":   "<TEST_SHAREPOINT_CONNECTION_ID>"
+        },
+        "Production": {
+          "dataSourceType": "SharePoint",
+          "connectionId":   "<PROD_SHAREPOINT_CONNECTION_ID>"
+        }
+      }
+    },
+    {
+      "item": "PAB_Gold_SM",
+      "type": "SemanticModel",
+      "rule": "DataSourceRule",
+      "description": "Binds semantic model to the stage-appropriate Gold_LH SQL endpoint",
+      "stages": {
+        "Development": {
+          "dataSourceType": "Lakehouse",
+          "connectionPath": "PAB-Dev/Gold_LH"
+        },
+        "Test": {
+          "dataSourceType": "Lakehouse",
+          "connectionPath": "PAB-Test/Gold_LH"
+        },
+        "Production": {
+          "dataSourceType": "Lakehouse",
+          "connectionPath": "PAB-Prod/Gold_LH"
+        }
+      }
+    }
+  ],
+  "_howto": [
+    "1. Open PAB_DeployPipeline in Fabric portal",
+    "2. Click ⚙️ Deployment Rules on the Dev→Test or Test→Prod stage boundary",
+    "3. For each rule above: select the item → choose rule type → fill in values per stage",
+    "4. Rules are applied automatically every time you deploy between stages",
+    "5. Rules for DataflowGen2 and SemanticModel require the Connection ID from Fabric Admin Portal → Connections"
+  ]
+}
