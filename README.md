@@ -33,11 +33,11 @@ fabric-cicd-demo/
 │   ├── cost_data.csv           — Simulates Alpha (OPEX/CAPEX costs)
 │   └── schedule_data.csv       — Simulates SharePoint (maintenance schedule)
 │
-├── notebooks/
-│   ├── NB_00_Setup_Environment.py  — Verify the three lakehouses exist in the workspace
-│   ├── NB_01_Seed_Bronze.py        — Create Bronze Delta tables from sample data
-│   ├── NB_02_Transform_Silver.py   — Clean & enrich → Silver layer
-│   └── NB_03_Aggregate_Gold.py     — Aggregate → Gold layer + KPI facts table
+├── NB_00_Setup_Environment.Notebook/  — Verify the three lakehouses exist in the workspace
+├── NB_01_Seed_Bronze.Notebook/        — Create Bronze Delta tables from sample data
+├── NB_02_Transform_Silver.Notebook/   — Clean & enrich → Silver layer
+├── NB_03_Aggregate_Gold.Notebook/     — Aggregate → Gold layer + KPI facts table
+│     (each is a Fabric Git folder: .platform + notebook-content.py)
 │
 ├── pipelines/
 │   ├── PL_Refresh_Master.json      — Master orchestration (Bronze→Silver→Gold→Refresh SM)
@@ -111,7 +111,7 @@ In your workspace (`ws-CICD-DevTest`), create three lakehouses with these **exac
 - `Silver_LH`
 - `Gold_LH`
 
-> The notebooks write tables with two-part names (e.g. `Bronze_LH.production_raw`),
+> The notebooks write tables with three-part names (e.g. `Bronze_LH.dbo.production_raw`),
 > so the lakehouse names must match exactly.
 >
 > *(Optional, multi-workspace path)* To provision `PAB-Dev / PAB-Test / PAB-Prod`
@@ -119,9 +119,11 @@ In your workspace (`ws-CICD-DevTest`), create three lakehouses with these **exac
 > `CAPACITY_ID` and run `pip install requests` then
 > `python scripts/01_setup_fabric_workspaces.py`.
 
-### Step 3 — Import the notebooks
-In the Fabric UI: workspace → **+ New item → Import notebook** → upload each `.py`
-file from `/notebooks/`.
+### Step 3 — Sync the notebooks from Git
+The notebooks are stored in Fabric Git format (each as an `NB_*.Notebook/` folder).
+Connect the workspace to this repo (**Workspace settings → Git integration**), then
+**Source control → Update** to bring the notebooks into the workspace. No manual
+`.py` import is needed.
 
 ### Step 4 — Attach all three lakehouses to every notebook ⚠️
 Open each notebook (`NB_01`, `NB_02`, `NB_03`) and in the **Explorer / Lakehouses**

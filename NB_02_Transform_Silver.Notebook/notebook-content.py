@@ -22,7 +22,7 @@ spark = SparkSession.builder.getOrCreate()
 print("Starting Silver transformation...")
 
 # Cell 2 — Production: filter, cast, compute KPIs
-df_prod_raw = spark.table("Bronze_LH.production_raw")
+df_prod_raw = spark.table("Bronze_LH.dbo.production_raw")
 
 df_silver_prod = (
     df_prod_raw
@@ -48,15 +48,15 @@ df_silver_prod.write \
     .format("delta") \
     .mode("overwrite") \
     .option("overwriteSchema", "true") \
-    .saveAsTable("Silver_LH.production_conformed")
+    .saveAsTable("Silver_LH.dbo.production_conformed")
 
 count_prod = df_silver_prod.count()
 print(f"✅ Silver_LH.production_conformed: {count_prod} rows")
 display(df_silver_prod.limit(5))
 
 # Cell 3 — Cost: enrich with daily BOE for cost-per-BOE KPI
-df_cost_raw = spark.table("Bronze_LH.cost_raw")
-df_prod_silver = spark.table("Silver_LH.production_conformed")
+df_cost_raw = spark.table("Bronze_LH.dbo.cost_raw")
+df_prod_silver = spark.table("Silver_LH.dbo.production_conformed")
 
 # Daily BOE by field for joining
 daily_boe = (
@@ -79,12 +79,12 @@ df_silver_cost.write \
     .format("delta") \
     .mode("overwrite") \
     .option("overwriteSchema", "true") \
-    .saveAsTable("Silver_LH.cost_conformed")
+    .saveAsTable("Silver_LH.dbo.cost_conformed")
 
 print(f"✅ Silver_LH.cost_conformed: {df_silver_cost.count()} rows")
 
 # Cell 4 — Schedule: add derived columns, flag criticals
-df_sched_raw = spark.table("Bronze_LH.schedule_raw")
+df_sched_raw = spark.table("Bronze_LH.dbo.schedule_raw")
 
 df_silver_sched = (
     df_sched_raw
@@ -103,14 +103,14 @@ df_silver_sched.write \
     .format("delta") \
     .mode("overwrite") \
     .option("overwriteSchema", "true") \
-    .saveAsTable("Silver_LH.schedule_conformed")
+    .saveAsTable("Silver_LH.dbo.schedule_conformed")
 
 print(f"✅ Silver_LH.schedule_conformed: {df_silver_sched.count()} rows")
 
 # Cell 5 — Validate row counts
 print("\n── Silver Layer Validation ──────────────────────────")
 for tbl in ["production_conformed", "cost_conformed", "schedule_conformed"]:
-    n = spark.table(f"Silver_LH.{tbl}").count()
+    n = spark.table(f"Silver_LH.dbo.{tbl}").count()
     print(f"  Silver_LH.{tbl}: {n} rows")
 
 print("\n🏆 Silver transformation COMPLETE")

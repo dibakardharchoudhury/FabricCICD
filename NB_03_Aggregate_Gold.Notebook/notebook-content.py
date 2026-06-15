@@ -18,7 +18,7 @@ spark = SparkSession.builder.getOrCreate()
 print("Starting Gold aggregation...")
 
 # Cell 2 — Gold Production: daily field-level summary
-df_silver_prod = spark.table("Silver_LH.production_conformed")
+df_silver_prod = spark.table("Silver_LH.dbo.production_conformed")
 
 df_gold_prod = (
     df_silver_prod
@@ -42,13 +42,13 @@ df_gold_prod.write \
     .format("delta") \
     .mode("overwrite") \
     .option("overwriteSchema", "true") \
-    .saveAsTable("Gold_LH.production_daily")
+    .saveAsTable("Gold_LH.dbo.production_daily")
 
 print(f"✅ Gold_LH.production_daily: {df_gold_prod.count()} rows")
 display(df_gold_prod.orderBy("date", "field"))
 
 # Cell 3 — Gold Cost: monthly field + cost type summary
-df_silver_cost = spark.table("Silver_LH.cost_conformed")
+df_silver_cost = spark.table("Silver_LH.dbo.cost_conformed")
 
 df_gold_cost = (
     df_silver_cost
@@ -69,12 +69,12 @@ df_gold_cost.write \
     .format("delta") \
     .mode("overwrite") \
     .option("overwriteSchema", "true") \
-    .saveAsTable("Gold_LH.cost_monthly")
+    .saveAsTable("Gold_LH.dbo.cost_monthly")
 
 print(f"✅ Gold_LH.cost_monthly: {df_gold_cost.count()} rows")
 
 # Cell 4 — Gold Schedule: field activity summary
-df_silver_sched = spark.table("Silver_LH.schedule_conformed")
+df_silver_sched = spark.table("Silver_LH.dbo.schedule_conformed")
 
 df_gold_sched = (
     df_silver_sched
@@ -93,13 +93,13 @@ df_gold_sched.write \
     .format("delta") \
     .mode("overwrite") \
     .option("overwriteSchema", "true") \
-    .saveAsTable("Gold_LH.schedule_summary")
+    .saveAsTable("Gold_LH.dbo.schedule_summary")
 
 print(f"✅ Gold_LH.schedule_summary: {df_gold_sched.count()} rows")
 
 # Cell 5 — Cross-domain enrichment: KPI fact table for reporting
 df_prod_summary = (
-    spark.table("Gold_LH.production_daily")
+    spark.table("Gold_LH.dbo.production_daily")
     .groupBy("field")
     .agg(
         avg("total_boe").alias("avg_daily_boe"),
@@ -109,7 +109,7 @@ df_prod_summary = (
 )
 
 df_cost_summary = (
-    spark.table("Gold_LH.cost_monthly")
+    spark.table("Gold_LH.dbo.cost_monthly")
     .groupBy("field")
     .agg(
         _sum("total_cost_usd").alias("total_cost_usd"),
@@ -131,7 +131,7 @@ df_kpi_facts.write \
     .format("delta") \
     .mode("overwrite") \
     .option("overwriteSchema", "true") \
-    .saveAsTable("Gold_LH.field_kpi_facts")
+    .saveAsTable("Gold_LH.dbo.field_kpi_facts")
 
 print(f"✅ Gold_LH.field_kpi_facts: {df_kpi_facts.count()} rows")
 display(df_kpi_facts)
@@ -139,7 +139,7 @@ display(df_kpi_facts)
 # Cell 6 — Final validation
 print("\n── Gold Layer Validation ────────────────────────────")
 for tbl in ["production_daily", "cost_monthly", "schedule_summary", "field_kpi_facts"]:
-    n = spark.table(f"Gold_LH.{tbl}").count()
+    n = spark.table(f"Gold_LH.dbo.{tbl}").count()
     print(f"  Gold_LH.{tbl}: {n} rows")
 
 print("\n🏆 Gold aggregation COMPLETE — tables ready for Semantic Model")
