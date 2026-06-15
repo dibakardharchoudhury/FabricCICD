@@ -1,7 +1,12 @@
 # Fabric Notebook: NB_01_Seed_Bronze
 # Purpose: Create Bronze Delta tables from inline sample data (no external source needed)
 # Layer: Bronze — raw, source-oriented ingestion
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────
+# ⚠️ Attach Bronze_LH to this notebook (Lakehouses pane). Tables use the explicit
+#    three-part name Bronze_LH.dbo.<table> so they land in Bronze_LH/Tables/dbo/ —
+#    this avoids the schema-enabled lakehouse parsing a two-part name like
+#    "Bronze_LH.production_raw" as schema.table ([SCHEMA_NOT_FOUND]).
+# ──────────────────────────────────────────────────────────────────────────
 
 # Cell 1 — Imports & Spark session
 from pyspark.sql import SparkSession
@@ -63,7 +68,7 @@ df_prod = df_prod.withColumn("ingested_at", current_timestamp()) \
                  .withColumn("source_system", lit("PIMS"))
 
 df_prod.write.format("delta").mode("overwrite").option("overwriteSchema", "true") \
-       .saveAsTable("Bronze_LH.production_raw")
+       .saveAsTable("Bronze_LH.dbo.production_raw")
 print(f"✅ Bronze_LH.production_raw: {df_prod.count()} rows written")
 display(df_prod)
 
@@ -107,7 +112,7 @@ df_cost = df_cost.withColumn("ingested_at", current_timestamp()) \
                  .withColumn("source_system", lit("Alpha"))
 
 df_cost.write.format("delta").mode("overwrite").option("overwriteSchema", "true") \
-       .saveAsTable("Bronze_LH.cost_raw")
+       .saveAsTable("Bronze_LH.dbo.cost_raw")
 print(f"✅ Bronze_LH.cost_raw: {df_cost.count()} rows written")
 
 # Cell 4 — Schedule Raw Data (simulates SharePoint source)
@@ -140,7 +145,7 @@ df_sched = df_sched.withColumn("ingested_at", current_timestamp()) \
                    .withColumn("source_system", lit("SharePoint"))
 
 df_sched.write.format("delta").mode("overwrite").option("overwriteSchema", "true") \
-        .saveAsTable("Bronze_LH.schedule_raw")
+        .saveAsTable("Bronze_LH.dbo.schedule_raw")
 print(f"✅ Bronze_LH.schedule_raw: {df_sched.count()} rows written")
 
 print("\n" + "="*60)

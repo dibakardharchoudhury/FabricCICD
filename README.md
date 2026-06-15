@@ -65,6 +65,34 @@ fabric-cicd-demo/
     └── deployment_rules.json       — Deployment rules reference (configure in UI)
 ```
 
+## Three things are called “pipeline” — don’t mix them up
+
+This demo uses the word “pipeline” in three different ways. Knowing which is which
+makes every step below clear:
+
+| # | Name | Lives in | What it does | When you run it |
+|---|------|----------|--------------|-----------------|
+| 1 | **Data pipelines** | `pipelines/*.json` | Fabric Data Factory pipelines that move/transform *data* inside a workspace | During the data build / refresh (Steps 5 & 10) |
+| 2 | **Fabric Deployment Pipeline** | created by `scripts/03_create_deployment_pipeline.py` | Promotes *items* (lakehouses, notebooks, pipelines, semantic model) across **Dev → Test → Prod** workspaces | During CI/CD setup (Step 8) and each promotion |
+| 3 | **GitHub Actions “pipelines”** | `github_actions/*.yml` | CI/CD automation that triggers the Fabric Deployment Pipeline on push/merge | Automatically on git push (Steps 9 & 11) |
+
+### The two data pipelines (#1 above)
+- **`PL_Refresh_Master`** — *orchestration.* Runs the whole Medallion build in order:
+  `NB_01_Seed_Bronze → NB_02_Transform_Silver → NB_03_Aggregate_Gold → Refresh PAB_Gold_SM`,
+  with each step gated on the previous one succeeding. **Run this for a one-click full
+  refresh** — especially after a deployment, because lakehouse deploys carry structure
+  but no data. It is parameterized by `Environment` / `WorkspaceId` / `SemanticModelId`
+  so the *same* pipeline works in Dev, Test, and Prod.
+- **`PL_Copy_Bronze_Ingest`** — *ingestion.* A Copy Activity pipeline that loads the raw
+  CSVs from OneLake Files into the Bronze Delta tables (with column mappings and an
+  incremental watermark). It is the “real-world ingestion” alternative to
+  `NB_01_Seed_Bronze`, which fakes Bronze data with inline rows for a zero-dependency demo.
+
+> **Which do I run to load data?**
+> - Simplest demo → just run the **notebooks** `NB_01`→`NB_03` (no pipeline needed).
+> - One-click refresh / post-deployment → run **`PL_Refresh_Master`**.
+> - To show file-based ingestion → run **`PL_Copy_Bronze_Ingest`** (then Silver/Gold).
+
 ## Quick Start
 
 > The fastest path to a working demo is to run the **data pipeline first** (Steps 1–5)
@@ -114,6 +142,12 @@ lakehouses exist in the workspace it is running in. Open it and confirm
 After Step 5 you have a fully built Medallion lakehouse. Stop here for a data-only
 demo, or continue to wire up CI/CD.
 
+> **Pipeline alternative (optional):** instead of running the four notebooks by hand,
+> you can import `pipelines/PL_Refresh_Master.json` and run it once — it executes
+> `NB_01 → NB_02 → NB_03` and refreshes the semantic model in a single click. To
+> demonstrate file-based ingestion instead of the seed notebook, run
+> `pipelines/PL_Copy_Bronze_Ingest.json` first, then `NB_02` and `NB_03`.
+
 ### Step 6 — Connect Git Integration
 ```bash
 # Edit GitHub PAT and repo URL in the script
@@ -128,7 +162,9 @@ In the workspace: **Source control** icon → select all items → add a commit 
 ```bash
 python scripts/03_create_deployment_pipeline.py
 ```
-Note the pipeline ID — add it to GitHub secrets as `FABRIC_PIPELINE_ID`
+This creates the **Fabric Deployment Pipeline** (pipeline type #2) that promotes items
+across Dev → Test → Prod. Note the pipeline ID — add it to GitHub secrets as
+`FABRIC_PIPELINE_ID`.
 
 ### Step 9 — Configure GitHub Actions
 Add these secrets to your GitHub repository:
@@ -141,8 +177,10 @@ Copy `github_actions/*.yml` to `.github/workflows/` in your repo.
 
 ### Step 10 — Refresh data after deployment
 Lakehouse deployments copy **structure only, not data**. After the pipeline deploys
-to Test/Prod, run `NB_01` → `NB_02` → `NB_03` (or `PL_Refresh_Master`) in the target
-workspace to populate tables.
+to Test/Prod, repopulate the target workspace by either:
+- running the notebooks `NB_01` → `NB_02` → `NB_03` in that workspace, **or**
+- running the **`PL_Refresh_Master`** data pipeline once (does all three + semantic
+  model refresh in one click — the recommended option for Test/Prod).
 
 ### Step 11 — Demo the CI/CD Loop
 1. Open `NB_02_Transform_Silver` in your dev workspace
