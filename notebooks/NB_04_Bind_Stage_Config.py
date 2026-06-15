@@ -71,11 +71,26 @@ def fabric_rest(method, path, body=None):
 
 def resolve_workspace_id(name):
     wss = fabric_rest("GET", "/workspaces")["value"]
-    return next(w["id"] for w in wss if w["displayName"] == name)
+    match = next((w["id"] for w in wss if w["displayName"] == name), None)
+    if match is None:
+        available = ", ".join(sorted(w["displayName"] for w in wss)) or "(none visible)"
+        raise ValueError(
+            f"Workspace '{name}' not found or not visible to the running identity. "
+            f"Check the name (exact, case-sensitive) and that this identity has access. "
+            f"Workspaces visible: {available}"
+        )
+    return match
 
 def resolve_item_id(workspace_id, display_name, item_type):
     items = fabric_rest("GET", f"/workspaces/{workspace_id}/items?type={item_type}")["value"]
-    return next(i["id"] for i in items if i["displayName"] == display_name)
+    match = next((i["id"] for i in items if i["displayName"] == display_name), None)
+    if match is None:
+        available = ", ".join(sorted(i["displayName"] for i in items)) or "(none)"
+        raise ValueError(
+            f"{item_type} '{display_name}' not found in workspace {workspace_id}. "
+            f"Check the name (exact, case-sensitive). {item_type}s present: {available}"
+        )
+    return match
 
 # Cell 4 — Create the Variable Library IF it does not already exist (idempotent bootstrap)
 # Resolves each stage's GUIDs from the NAMES above. Development is the default value set;
