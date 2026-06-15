@@ -40,8 +40,8 @@
 # used ONLY the FIRST time this notebook runs (to seed the Variable Library's Dev/Prod
 # value sets). After the library exists they are ignored. Lakehouse names are identical in
 # every stage; only the workspace name differs per stage.
-dev_workspace_name  = "ws-CICD-Dev"
-prod_workspace_name = "ws-CICD-Prod"
+dev_workspace_name  = "ws-CICD-DevTest"
+prod_workspace_name = "ws-CICD-PROD"
 
 bronze_lakehouse_name = "Bronze_LH"
 silver_lakehouse_name = "Silver_LH"
@@ -60,13 +60,24 @@ VL_NAME = "VL_CICD_Bindings"
 # Cell 3 — Fabric REST helpers (resolve NAMES -> GUIDs). Control-plane only; no lakehouse.
 _FABRIC_BASE = "https://api.fabric.microsoft.com/v1"
 def fabric_rest(method, path, body=None):
+    """Call the Fabric REST API and surface a clear error if it fails."""
     token = notebookutils.credentials.getToken("https://api.fabric.microsoft.com")
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     resp = requests.request(
         method, f"{_FABRIC_BASE}{path}", headers=headers,
         data=json.dumps(body) if body is not None else None,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        detail = resp.text[:800] if resp.text else "(empty response body)"
+        hint = ""
+        if resp.status_code in (401, 403):
+            hint = " — the running identity lacks permission on this item/workspace."
+        elif resp.status_code == 404:
+            hint = " — the workspace or item id does not exist (or is not visible)."
+        raise RuntimeError(
+            f"Fabric REST {method} {path} failed: HTTP {resp.status_code} {resp.reason}.{hint}\n"
+            f"Response: {detail}"
+        )
     return resp.json() if resp.text else {}
 
 def resolve_workspace_id(name):
@@ -75,9 +86,10 @@ def resolve_workspace_id(name):
     if match is None:
         available = ", ".join(sorted(w["displayName"] for w in wss)) or "(none visible)"
         raise ValueError(
-            f"Workspace '{name}' not found or not visible to the running identity. "
-            f"Check the name (exact, case-sensitive) and that this identity has access. "
-            f"Workspaces visible: {available}"
+            f"Workspace '{name}' not found or not visible to the running identity.\n"
+            f"  - Check the name is EXACT and case-sensitive (parameters cell, Cell 1).\n"
+            f"  - Check this identity has at least Viewer access to that workspace.\n"
+            f"  Workspaces currently visible: {available}"
         )
     return match
 
@@ -87,8 +99,10 @@ def resolve_item_id(workspace_id, display_name, item_type):
     if match is None:
         available = ", ".join(sorted(i["displayName"] for i in items)) or "(none)"
         raise ValueError(
-            f"{item_type} '{display_name}' not found in workspace {workspace_id}. "
-            f"Check the name (exact, case-sensitive). {item_type}s present: {available}"
+            f"{item_type} '{display_name}' not found in workspace {workspace_id}.\n"
+            f"  - Check the name is EXACT and case-sensitive.\n"
+            f"  - Confirm the item was deployed to this stage.\n"
+            f"  {item_type}s present: {available}"
         )
     return match
 
@@ -119,7 +133,10 @@ if not _already_exists:
         "SilverLakehouseId": "Silver_LH id -> NB_02 default lakehouse + DF_Gold_PA SilverLakehouseId.",
         "GoldLakehouseId":   "Gold_LH id -> NB_03 default lakehouse + Gold_SM Direct Lake source.",
     }
-    variables  = [{"name": k, "type": "Guid", "value": dev[k], "note": notes[k]} for k in notes]
+    # NOTE: the create_variable_library wrapper accepts only Boolean/DateTime/Number/
+    # Integer/String, so GUIDs are stored as "String" values (Fabric still treats them
+    # as plain text identifiers; consumers read the literal GUID string).
+    variables  = [{"name": k, "type": "String", "value": dev[k], "note": notes[k]} for k in notes]
     value_sets = [
         {"name": "Development", "variableOverrides": [{"name": k, "value": dev[k]}  for k in notes]},
         {"name": "Production",  "variableOverrides": [{"name": k, "value": prod[k]} for k in notes]},
@@ -138,11 +155,26 @@ else:
 # Cell 5 — Read the ACTIVE Variable Library value set (single source of truth)
 # Notebooks are a Variable Library consumer via NotebookUtils. getLibrary resolves the
 # value set that is ACTIVE in this workspace/stage (Dev IDs in Dev, Prod IDs in Prod).
-vl = notebookutils.variableLibrary.getLibrary(VL_NAME)
-WORKSPACE_ID        = vl.WorkspaceId
-BRONZE_LAKEHOUSE_ID = vl.BronzeLakehouseId
-SILVER_LAKEHOUSE_ID = vl.SilverLakehouseId
-GOLD_LAKEHOUSE_ID   = vl.GoldLakehouseId
+try:
+    vl = notebookutils.variableLibrary.getLibrary(VL_NAME)
+    WORKSPACE_ID        = vl.WorkspaceId
+    BRONZE_LAKEHOUSE_ID = vl.BronzeLakehouseId
+    SILVER_LAKEHOUSE_ID = vl.SilverLakehouseId
+    GOLD_LAKEHOUSE_ID   = vl.GoldLakehouseId
+except Exception as e:
+    raise RuntimeError(
+        f"Could not read Variable Library '{VL_NAME}' or one of its variables "
+        f"(WorkspaceId/BronzeLakehouseId/SilverLakehouseId/GoldLakehouseId).\n"
+        f"  - Confirm the library exists in THIS workspace and the active value set is set.\n"
+        f"  - Confirm all four variable names match exactly.\n"
+        f"  Underlying error: {e}"
+    ) from e
+
+if any(v in (None, "") for v in (WORKSPACE_ID, BRONZE_LAKEHOUSE_ID, SILVER_LAKEHOUSE_ID, GOLD_LAKEHOUSE_ID)):
+    raise ValueError(
+        "Variable Library returned an empty value for one of the bindings. "
+        "Check the active value set has all four GUIDs populated for this stage."
+    )
 
 print("Resolved stage bindings from Variable Library:")
 print(f"  WorkspaceId        = {WORKSPACE_ID}")
@@ -180,7 +212,12 @@ param_values = {
     "SilverLakehouseId": SILVER_LAKEHOUSE_ID,
 }
 
-definition = fabric_rest("POST", f"/workspaces/{WORKSPACE_ID}/items/{df_id}/getDefinition")["definition"]
+definition = fabric_rest("POST", f"/workspaces/{WORKSPACE_ID}/items/{df_id}/getDefinition").get("definition")
+if not definition or "parts" not in definition:
+    raise RuntimeError(
+        f"{DATAFLOW_NAME}: getDefinition did not return a 'definition.parts' payload. "
+        "The item may be a long-running op or an unexpected type — verify it is a Dataflow Gen2."
+    )
 changed = False
 for part in definition["parts"]:
     if part["path"].lower().endswith(("mashup.pq", "querymetadata.json")):
