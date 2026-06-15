@@ -451,7 +451,93 @@ with _quiet():
     )
 _say("<b>Gold_SM</b>: Direct Lake on OneLake connection set to this stage's Gold_LH.")
 
-# Cell 11 — Summary (rich HTML card, stage-aware)
+# Cell 11 — (4) Patch the PL_Refresh_Master semantic-model-refresh activity for THIS stage
+# The pipeline's built-in "Semantic model refresh" activity (SM_Gold_Refresh, type
+# PBISemanticModelRefresh) stores the target as STATIC ids in its definition:
+#   typeProperties.groupId   -> the workspace that owns the model
+#   typeProperties.datasetId -> the Gold_SM semantic model
+# Unlike notebook/dataflow activities, the Fabric deployment pipeline does NOT auto-rewrite
+# these cross-stage, so in Prod they would still point at Dev and refresh the WRONG model.
+# We patch them here to this stage, exactly like the dataflow parameter patch in Cell 9.
+#
+# Note on libraries: semantic-link-labs can READ a pipeline (get_data_pipeline_definition)
+# but has NO update wrapper, so the write-back uses the same raw-REST getDefinition/
+# updateDefinition path as Cell 9 (fabric_rest handles base64 + the 202 long-running op).
+#
+# Note on externalReferences.connection: that is a tenant-level connection object, not a
+# workspace-scoped id, so it is NOT rewritten here. If the Prod identity cannot use that
+# same connection, recreate/authorize it in Prod and re-point the activity manually once.
+#
+# IMPORTANT (ordering): a pipeline loads its FULL definition at the START of a run and NB_04
+# is its first activity, so this patch only takes effect on the NEXT run. After promoting to
+# a new stage, run NB_04 ONCE standalone before the first scheduled PL_Refresh_Master so the
+# very first refresh already targets this stage's model.
+PIPELINE_NAME         = "PL_Refresh_Master"
+REFRESH_ACTIVITY_TYPE = "PBISemanticModelRefresh"
+
+pl_id      = resolve_item_id(WORKSPACE_ID, PIPELINE_NAME, "DataPipeline")
+GOLD_SM_ID = resolve_item_id(WORKSPACE_ID, "Gold_SM", "SemanticModel")
+
+def _patch_refresh_activities(activities):
+    """Walk a pipeline's activity list (recursing into ForEach/Until/If/Switch containers)
+    and re-point every semantic-model-refresh activity to THIS stage. Returns count patched."""
+    patched = 0
+    for act in activities or []:
+        if act.get("type") == REFRESH_ACTIVITY_TYPE:
+            tp = act.setdefault("typeProperties", {})
+            tp["groupId"]   = WORKSPACE_ID
+            tp["datasetId"] = GOLD_SM_ID
+            patched += 1
+        tp = act.get("typeProperties", {}) or {}
+        # ForEach / Until / generic container child activities
+        if isinstance(tp.get("activities"), list):
+            patched += _patch_refresh_activities(tp["activities"])
+        # If Condition branches
+        for branch in ("ifTrueActivities", "ifFalseActivities"):
+            if isinstance(tp.get(branch), list):
+                patched += _patch_refresh_activities(tp[branch])
+        # Switch cases + default
+        for case in tp.get("cases", []) or []:
+            if isinstance(case.get("activities"), list):
+                patched += _patch_refresh_activities(case["activities"])
+        if isinstance(tp.get("defaultActivities"), list):
+            patched += _patch_refresh_activities(tp["defaultActivities"])
+    return patched
+
+pl_def = fabric_rest("POST", f"/workspaces/{WORKSPACE_ID}/items/{pl_id}/getDefinition").get("definition")
+if not pl_def or "parts" not in pl_def:
+    raise RuntimeError(
+        f"{PIPELINE_NAME}: getDefinition did not return a 'definition.parts' payload. "
+        "Verify the item is a Data Pipeline."
+    )
+
+SM_REFRESH_PATCHED = 0
+for part in pl_def["parts"]:
+    if part["path"].lower().endswith("pipeline-content.json"):
+        content = json.loads(base64.b64decode(part["payload"]).decode("utf-8"))
+        SM_REFRESH_PATCHED = _patch_refresh_activities(
+            content.get("properties", {}).get("activities", [])
+        )
+        if SM_REFRESH_PATCHED:
+            part["payload"] = base64.b64encode(
+                json.dumps(content, indent=2).encode("utf-8")
+            ).decode("utf-8")
+        break
+
+if SM_REFRESH_PATCHED:
+    fabric_rest(
+        "POST", f"/workspaces/{WORKSPACE_ID}/items/{pl_id}/updateDefinition",
+        {"definition": pl_def},
+    )
+    SM_REFRESH_BOUND = True
+    _say(f"<b>{PIPELINE_NAME}</b>: semantic-model-refresh activity re-pointed to this stage's "
+         f"workspace + Gold_SM (takes effect on the NEXT pipeline run).")
+else:
+    SM_REFRESH_BOUND = False
+    _say(f"<b>{PIPELINE_NAME}</b>: no '{REFRESH_ACTIVITY_TYPE}' activity found in the pipeline "
+         f"definition — nothing to re-point. Add the Semantic model refresh activity first.", "warn")
+
+# Cell 12 — Summary (rich HTML card, stage-aware)
 _cell = "padding:6px 16px;border-bottom:1px solid #eaeef2"
 _rows = "".join(
     f"<tr><td style='{_cell}'>{nb}</td>"
@@ -462,6 +548,8 @@ _rows = "".join(
                    ("NB_03_Aggregate_Gold", "Gold_LH")]
 )
 _df_txt = "set ✓" if DF_BOUND else "<span style='color:#9a6700'>UNCHANGED (check names)</span>"
+_sm_txt = ("re-pointed ✓ (next run)" if SM_REFRESH_BOUND
+           else "<span style='color:#9a6700'>NO refresh activity found</span>")
 display(HTML(f"""
 <div style="font-family:Segoe UI,system-ui,sans-serif;max-width:700px;border:1px solid #d0d7de;
             border-radius:10px;overflow:hidden;margin:10px 0;box-shadow:0 1px 3px #0000001a">
@@ -483,12 +571,12 @@ display(HTML(f"""
     </table>
     <div style="padding:2px 0">• <b>DF_Gold_PA</b> &nbsp;→&nbsp; Silver_LH params {_df_txt}</div>
     <div style="padding:2px 0">• <b>Gold_SM</b> &nbsp;→&nbsp; Gold_LH (Direct Lake on OneLake)</div>
+    <div style="padding:2px 0">• <b>PL_Refresh_Master</b> &nbsp;→&nbsp; SM_Gold_Refresh {_sm_txt}</div>
     <div style="margin-top:12px;padding:8px 12px;background:#ddf4ff;border-radius:6px;color:#0a3069">
       <b>Next:</b> NB_01 → NB_02 → DF_Gold_PA → NB_03 now load THIS stage.</div>
   </div>
 </div>
 """))
-
 
 
 # METADATA ********************
