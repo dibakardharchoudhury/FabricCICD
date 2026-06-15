@@ -9,6 +9,26 @@
 # META   "dependencies": {}
 # META }
 
+# MARKDOWN ********************
+
+# ## ⚠️ One-time setup per workspace — attach the lakehouses
+# 
+# After syncing from Git into a workspace (Dev / Test / Prod), open **NB_01**, **NB_02**
+# and **NB_03** and in the **Explorer → Lakehouses** pane add **all three** lakehouses
+# (`Bronze_LH`, `Silver_LH`, `Gold_LH`), then set one as the default. The notebooks ship
+# with an empty `"dependencies": {}` block because attached-lakehouse GUIDs are
+# workspace-specific and must not be committed to Git. Without attaching, the three-part
+# table names (e.g. `Silver_LH.dbo.production_conformed`) fail with `[SCHEMA_NOT_FOUND]`.
+# 
+# `NB_00` itself needs no lakehouse — it only verifies the three exist (below).
+
+# METADATA ********************
+
+# META {
+# META   "language": "markdown",
+# META   "language_group": "synapse_pyspark"
+# META }
+
 # CELL ********************
 
 # Fabric Notebook: NB_00_Setup_Environment

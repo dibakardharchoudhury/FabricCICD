@@ -56,13 +56,6 @@ fabric-cicd-demo/
 │   ├── deploy-dev-to-test.yml      — Auto-deploy on push to develop branch
 │   └── deploy-test-to-prod.yml     — Manual production deployment with approval
 │
-├── scripts/
-│   ├── 01_setup_fabric_workspaces.py     — Create workspaces + lakehouses via REST API
-│   ├── 02_connect_git_integration.py     — Connect PAB-Dev to GitHub via REST API
-│   ├── 03_create_deployment_pipeline.py  — Create pipeline + assign workspaces
-│   └── 04_bind_lakehouses_to_notebooks.py — Inject the workspace's live lakehouse
-│                                            GUIDs into each notebook (GUID-free repo)
-│
 └── deployment_rules/
     └── deployment_rules.json       — Deployment rules reference (configure in UI)
 ```
@@ -75,7 +68,7 @@ makes every step below clear:
 | # | Name | Lives in | What it does | When you run it |
 |---|------|----------|--------------|-----------------|
 | 1 | **Data pipelines** | `pipelines/*.json` | Fabric Data Factory pipelines that move/transform *data* inside a workspace | During the data build / refresh (Steps 5 & 10) |
-| 2 | **Fabric Deployment Pipeline** | created by `scripts/03_create_deployment_pipeline.py` | Promotes *items* (lakehouses, notebooks, pipelines, semantic model) across **Dev → Test → Prod** workspaces | During CI/CD setup (Step 8) and each promotion |
+| 2 | **Fabric Deployment Pipeline** | Fabric portal → Deployment pipelines | Promotes *items* (lakehouses, notebooks, pipelines, semantic model) across **Dev → Test → Prod** workspaces | During CI/CD setup (Step 8) and each promotion |
 | 3 | **GitHub Actions “pipelines”** | `github_actions/*.yml` | CI/CD automation that triggers the Fabric Deployment Pipeline on push/merge | Automatically on git push (Steps 9 & 11) |
 
 ### The two data pipelines (#1 above)
@@ -115,11 +108,6 @@ In your workspace (`ws-CICD-DevTest`), create three lakehouses with these **exac
 
 > The notebooks write tables with three-part names (e.g. `Bronze_LH.dbo.production_raw`),
 > so the lakehouse names must match exactly.
->
-> *(Optional, multi-workspace path)* To provision `PAB-Dev / PAB-Test / PAB-Prod`
-> automatically via REST API instead, edit `TENANT_ID`, `CLIENT_ID`, `CLIENT_SECRET`,
-> `CAPACITY_ID` and run `pip install requests` then
-> `python scripts/01_setup_fabric_workspaces.py`.
 
 ### Step 3 — Sync the notebooks from Git
 The notebooks are stored in Fabric Git format (each as an `NB_*.Notebook/` folder).
@@ -127,30 +115,20 @@ Connect the workspace to this repo (**Workspace settings → Git integration**),
 **Source control → Update** to bring the notebooks into the workspace. No manual
 `.py` import is needed.
 
-### Step 4 — Bind the lakehouses to the notebooks ⚠️
+### Step 4 — Attach the lakehouses to the notebooks ⚠️
 Fabric notebooks reference attached lakehouses by **runtime object GUID**, and those
 GUIDs are unique to each workspace and change whenever a workspace/lakehouse is
 recreated. They are therefore **not** committed to Git — the notebooks ship with an
-empty `"dependencies": {}` block. You must bind the lakehouses **once per workspace**
-after every Git sync / deployment (Dev, Test, Prod). Two ways:
+empty `"dependencies": {}` block. You must attach the lakehouses **once per workspace**
+after every Git sync / deployment (Dev, Test, Prod):
 
-**Automated (recommended) — `scripts/04_bind_lakehouses_to_notebooks.py`:**
-```bash
-# Edit TENANT_ID / CLIENT_ID / CLIENT_SECRET and WORKSPACE_NAME (or WORKSPACE_ID)
-python scripts/04_bind_lakehouses_to_notebooks.py
-```
-It resolves `Bronze_LH` / `Silver_LH` / `Gold_LH` **by name** in the target workspace,
-then writes the live GUIDs into `NB_01` / `NB_02` / `NB_03` via the Fabric REST
-`updateDefinition` API (all three attached; default = Bronze/Silver/Gold respectively).
-It is idempotent and never hardcodes a GUID in source control.
+Open each notebook (`NB_01`, `NB_02`, `NB_03`) and in the **Explorer → Lakehouses**
+pane add **all three** lakehouses (`Bronze_LH`, `Silver_LH`, `Gold_LH`), then set
+**one as the default**. Without this, `saveAsTable("Silver_LH.…")` and cross-lakehouse
+reads fail with `[SCHEMA_NOT_FOUND]`. (`NB_00` documents this step inline.)
 
-**Manual (Fabric UI):** open each notebook (`NB_01`, `NB_02`, `NB_03`) and in the
-**Explorer / Lakehouses** pane add **all three** lakehouses, then set **one as the
-default**. Without this, `saveAsTable("Silver_LH.…")` and cross-lakehouse reads fail
-with `[SCHEMA_NOT_FOUND]`.
-
-> ⚠️ **Do not commit the bound GUIDs back to Git.** If you commit from the workspace
-> after binding, re-strip the `dependencies` block (or just don't stage those metadata
+> ⚠️ **Do not commit the attached GUIDs back to Git.** If you commit from the workspace
+> after attaching, re-strip the `dependencies` block (or just don't stage those metadata
 > lines) so the repo stays workspace-portable.
 
 `NB_00_Setup_Environment` needs no lakehouse — it only verifies the lakehouses exist
@@ -173,22 +151,17 @@ demo, or continue to wire up CI/CD.
 > `pipelines/PL_Copy_Bronze_Ingest.json` first, then `NB_02` and `NB_03`.
 
 ### Step 6 — Connect Git Integration
-```bash
-# Edit GitHub PAT and repo URL in the script
-python scripts/02_connect_git_integration.py
-```
-Or manually: workspace → **Workspace settings → Git integration → GitHub**
+In the workspace: **Workspace settings → Git integration → GitHub** — select the repo,
+branch, and folder, then connect.
 
 ### Step 7 — Commit to GitHub
 In the workspace: **Source control** icon → select all items → add a commit message → **Commit**
 
 ### Step 8 — Create Deployment Pipeline
-```bash
-python scripts/03_create_deployment_pipeline.py
-```
-This creates the **Fabric Deployment Pipeline** (pipeline type #2) that promotes items
-across Dev → Test → Prod. Note the pipeline ID — add it to GitHub secrets as
-`FABRIC_PIPELINE_ID`.
+In the Fabric portal: **Workspaces → Deployment pipelines → New pipeline**. Create three
+stages (Development → Test → Production) and assign the matching workspace to each. This
+**Fabric Deployment Pipeline** (pipeline type #2) promotes items across Dev → Test → Prod.
+Note the pipeline ID — add it to GitHub secrets as `FABRIC_PIPELINE_ID`.
 
 ### Step 9 — Configure GitHub Actions
 Add these secrets to your GitHub repository:
@@ -202,10 +175,10 @@ Copy `github_actions/*.yml` to `.github/workflows/` in your repo.
 ### Step 10 — Refresh data after deployment
 Lakehouse deployments copy **structure only, not data**. After the pipeline deploys
 to Test/Prod:
-1. **Bind the lakehouses** in the target workspace — run
-   `python scripts/04_bind_lakehouses_to_notebooks.py` (set `WORKSPACE_NAME` to the
-   Test/Prod workspace). Deployed notebooks arrive with an empty `dependencies` block,
-   so they need their lakehouses re-bound to that workspace's GUIDs before they run.
+1. **Attach the lakehouses** in the target workspace — open `NB_01` / `NB_02` / `NB_03`
+   and add all three lakehouses (see Step 4). Deployed notebooks arrive with an empty
+   `dependencies` block, so they need their lakehouses re-attached in that workspace
+   before they run.
 2. **Repopulate** the target workspace by either:
    - running the notebooks `NB_01` → `NB_02` → `NB_03` in that workspace, **or**
    - running the **`PL_Refresh_Master`** data pipeline once (does all three + semantic
@@ -232,4 +205,4 @@ to Test/Prod:
 | Deploy | Lakehouse deploys structure only (no data) | Run refresh pipeline after each deploy |
 | Deploy | Semantic models require Enhanced Metadata (mandatory Feb 2026) | Always publish from modern PBI Desktop |
 | Deploy | Same-name unpaired items create duplicates | Verify pairing in pipeline UI before deploying |
-| Notebook | Attached-lakehouse GUIDs are workspace-specific and change on recreate | Keep `dependencies` empty in Git; run `scripts/04_bind_lakehouses_to_notebooks.py` per workspace |
+| Notebook | Attached-lakehouse GUIDs are workspace-specific and change on recreate | Keep `dependencies` empty in Git; re-attach lakehouses in each workspace (Step 4) |
