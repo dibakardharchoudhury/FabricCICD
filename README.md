@@ -83,11 +83,25 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
 
 ## Part C — CI/CD
 
+> Part C1 (Steps 10–13) is the **manual** Dev → Prod promotion you can test right now — no service principal, no GitHub Actions. Part C2 (Steps 14–16) adds automation later.
+
+### Part C1 — Manual promotion with a Deployment Pipeline
+
 **10. Connect Git & commit** — Workspace settings → Git integration → GitHub → connect → **Update**. Then Source control → select items → **Commit**.
 
-**11. Create the Deployment Pipeline** — Fabric portal → Deployment pipelines → New → two stages (**Development → Production**); assign `ws-CICD-Dev` and `ws-CICD-Prod`. Click **Deploy** once to create paired items in Prod (verify items are *paired*, not duplicated). Copy the **pipeline GUID** from the URL for `FABRIC_PIPELINE_ID`.
+**11. Create the Deployment Pipeline** — Fabric portal → Deployment pipelines → New → two stages (**Development → Production**); assign `ws-CICD-Dev` to Development and `ws-CICD-Prod` (empty) to Production. In the **Development** stage select **all** items and click **Deploy** *once*. Fabric creates paired copies in Prod and links them. **Deploy everything in a single pass** — items deployed in separate batches don't auto-pair and create duplicates. Copy the **pipeline GUID** from the URL (needed later for automation).
 
-**12. Configure Deployment Rules** (`deployment_rules/deployment_rules.json` is the reference) — on the **Production** stage click **⚙️ Deployment rules**:
+**12. How each item maps Dev → Prod** — the deploy pairs items by name and re-points most bindings automatically. Out of all 10 items, **only the Dataflow needs a manual connection edit** and **only the semantic model needs a rule**:
+
+| Item | Auto-binds on deploy? | What you do in Prod |
+| --- | --- | --- |
+| 3 Lakehouses (`Bronze_LH`/`Silver_LH`/`Gold_LH`) | Paired by name | Structure copies, **data does not** — reload (Step 13) |
+| 4 Notebooks (`NB_Setup`, `NB_01`–`03`) | Default lakehouse re-maps to paired Prod LH | Re-attach lakehouses if the pane is blank (Step 4). 3-part names (`Silver_LH.dbo.…`) resolve by name |
+| 1 Dataflow (`DF_Gold_PA`) | ⚠️ **No** — source/destination still point at **Dev** lakehouse GUIDs | **Open it in Prod, repoint** `SilverProduction` source → Prod `Silver_LH` and `GoldProductionDaily` destination → Prod `Gold_LH` (just set the two `Silver*Id` params), **Publish** |
+| 1 Semantic model (`Gold_SM`) | DirectLake re-binds to paired Prod `Gold_LH` | Add the **Data source rule** below to make it explicit; measures travel with the model |
+| 1 Report (`Gold_Dashboard`) | Re-binds to paired Prod `Gold_SM` | Confirm it shows Prod data |
+
+**Configure the one rule** (`deployment_rules/deployment_rules.json` is the reference) — on the **Production** stage click **⚙️ Deployment rules** → select `Gold_SM` → **Data source rule** → point its Lakehouse / SQL endpoint at `ws-CICD-Prod/Gold_LH`, **Save**.
 
 | Item | Rule | Set |
 | --- | --- | --- |
@@ -95,11 +109,22 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
 
 > **No rule is needed for `PL_Refresh_Master`'s item references.** The pipeline points at notebooks/dataflow by literal GUID; when you promote **all items in the same deploy**, the Deployment Pipeline **auto-pairs** them and rewrites those GUIDs to the Prod items automatically on every deploy. The only manual rule is the `Gold_SM` data-source binding. Rules are portal-only (no public REST API) and apply automatically on every deploy.
 
-**13. Service principal & GitHub secrets** — register an Entra app (client ID, tenant ID, secret); enable *"Service principals can use Fabric APIs"*; add the SP as Admin on both workspaces and the deployment pipeline. Add GitHub secrets: `FABRIC_TENANT_ID`, `FABRIC_CLIENT_ID`, `FABRIC_CLIENT_SECRET`, `FABRIC_PIPELINE_ID`.
+**13. Reload data & verify the mapping** — lakehouse deploys carry **structure only, no data**, so populate Prod and check every binding:
 
-**14. Add the workflow** — copy `github_actions/deploy-dev-to-prod.yml` to `.github/workflows/`. On push to `main` it gets a Fabric token, calls `POST /v1/pipelines/{id}/deploy` (Dev→Prod), and gates on the GitHub `production` environment (add required reviewers). Deployment Rules apply server-side.
+1. **Pairing** — in the pipeline compare view every item shows the *paired* (chain-link) icon, none show "different"/"only in source"; no duplicate same-name items.
+2. **Lakehouses** — in Prod re-attach lakehouses in `NB_01`/`NB_02`/`NB_03` (Step 4).
+3. **Repoint the Dataflow** — open `DF_Gold_PA` in Prod, set `SilverWorkspaceId`/`SilverLakehouseId` to the **Prod** `Silver_LH`, confirm the `GoldProductionDaily` destination is **Prod** `Gold_LH`, **Publish**.
+4. **Load** — run `NB_Setup → NB_01 → NB_02`, refresh `DF_Gold_PA`, then run `NB_03` (or run `PL_Refresh_Master` once now that the Dataflow points at Prod).
+5. **Semantic model** — open `Gold_SM` → Settings/lineage shows **Prod** `Gold_LH` (not Dev); refresh; `Total BOE` / `Total Cost (USD)` return values.
+6. **Report** — open `Gold_Dashboard`; visuals render from Prod data and lineage points at the Prod `Gold_SM`.
 
-**15. Refresh after deploy** — lakehouse deploys carry **structure only, no data**. In Prod: re-attach lakehouses (Step 4), then run **`PL_Refresh_Master`** once (does all notebooks + dataflow + model refresh).
+> **Why the Dataflow is the one manual step:** notebooks, semantic models and reports use Fabric **internal item references** that the deployment pipeline rewrites to the paired Prod items. Dataflow Gen2 source/destination use **connection objects** that aren't part of that auto-rebind, so they keep pointing at Dev until you repoint them. Parameterizing those IDs is the first automation win in Part C2.
+
+### Part C2 — Automate the promotion (later)
+
+**14. Service principal & GitHub secrets** — register an Entra app (client ID, tenant ID, secret); enable *"Service principals can use Fabric APIs"*; add the SP as Admin on both workspaces and the deployment pipeline. Add GitHub secrets: `FABRIC_TENANT_ID`, `FABRIC_CLIENT_ID`, `FABRIC_CLIENT_SECRET`, `FABRIC_PIPELINE_ID` (the pipeline GUID from Step 11).
+
+**15. Add the workflow** — copy `github_actions/deploy-dev-to-prod.yml` to `.github/workflows/`. On push to `main` it gets a Fabric token, calls `POST /v1/pipelines/{id}/deploy` (Dev→Prod), and gates on the GitHub `production` environment (add required reviewers). The `Gold_SM` Deployment Rule applies server-side; the Dataflow repoint (Step 13.3) and data reload (Step 13.4) still run after each deploy until parameterized.
 
 **16. Demo the loop** — edit `NB_02` (e.g. uncomment the `gor_ratio` KPI) → run → Source control → Commit → PR to `main` → merge → GitHub Actions promotes Dev→Prod after reviewer approval.
 
@@ -109,7 +134,8 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
 
 - **Native item references** — the pipeline references notebooks/dataflow by literal GUID, exactly as Fabric exports them, so the template imports and saves without hanging. (Expression-based `notebookId`/`workspaceId` is what breaks the importer.)
 - **Promotion auto-pairs items** — build everything in Dev, assign workspaces, then deploy once: the Deployment Pipeline pairs every item and rewrites the pipeline's GUID references to the Prod items automatically on every subsequent deploy. No per-stage parameter wiring for item IDs.
-- **One manual rule** — only the `Gold_SM` data-source binding is set by hand; everything else is automatic.
+- **One manual rule** — only the `Gold_SM` data-source binding is set as a deployment rule; everything else item-related auto-pairs.
+- **One manual repoint** — the Dataflow Gen2 source/destination connections don't auto-rebind, so `DF_Gold_PA` is repointed once per target workspace (Step 13.3). Parameterizing those IDs is the first automation win.
 - **One-command refresh** — `PL_Refresh_Master` runs `NB_Setup → NB_01 → NB_02 → DF_Gold_PA → NB_03` in dependency order, so post-deploy data load is a single click (or one REST call).
 - **One artifact, two delivery paths** — the `.json` is the Git/source reference; the `.zip` is the one-click import template. Same activities, same order, same literal-GUID shape.
 
@@ -122,4 +148,5 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
 | Deploy | Items added after assignment aren't auto-paired; same-name unpaired items duplicate | Build all items first, verify pairing before deploying |
 | Deploy | Semantic models need Enhanced Metadata | Publish from modern Power BI Desktop / Tabular Editor |
 | Notebook | Attached-lakehouse GUIDs are workspace-specific | Keep `dependencies` empty in Git; re-attach per workspace (Step 4) |
+| Dataflow | Source/destination connections don't auto-rebind on deploy | Repoint `DF_Gold_PA` to the Prod lakehouses once after deploy (Step 13.3) |
 | Dataflow | New tables lag the SQL endpoint / picker | Refresh the Gold_LH SQL endpoint (Step 8 note) |
