@@ -36,19 +36,16 @@
 # -----------------------------------------------------------------------------------
 
 # Cell 1 — PARAMETERS (tag this cell as "parameters" in the Fabric notebook).
-# These seed the Variable Library the FIRST time this notebook runs. After the library
-# exists they are ignored — the library becomes the single source of truth and the
-# deployment pipeline activates the right value set per stage. Fill in the real GUIDs
-# once (or override at runtime from the pipeline) so the bootstrap can create the library.
-dev_workspace_id         = "<dev-workspace-id>"
-dev_bronze_lakehouse_id  = "<dev-bronze-lakehouse-id>"
-dev_silver_lakehouse_id  = "<dev-silver-lakehouse-id>"
-dev_gold_lakehouse_id    = "<dev-gold-lakehouse-id>"
+# Names only — the code resolves the GUIDs at runtime via the Fabric REST API. These are
+# used ONLY the FIRST time this notebook runs (to seed the Variable Library's Dev/Prod
+# value sets). After the library exists they are ignored. Lakehouse names are identical in
+# every stage; only the workspace name differs per stage.
+dev_workspace_name  = "ws-CICD-Dev"
+prod_workspace_name = "ws-CICD-Prod"
 
-prod_workspace_id        = "<prod-workspace-id>"
-prod_bronze_lakehouse_id = "<prod-bronze-lakehouse-id>"
-prod_silver_lakehouse_id = "<prod-silver-lakehouse-id>"
-prod_gold_lakehouse_id   = "<prod-gold-lakehouse-id>"
+bronze_lakehouse_name = "Bronze_LH"
+silver_lakehouse_name = "Silver_LH"
+gold_lakehouse_name   = "Gold_LH"
 
 # Cell 2 — Imports
 %pip install -q semantic-link-labs
@@ -60,37 +57,57 @@ import notebookutils
 
 VL_NAME = "VL_CICD_Bindings"
 
-# Cell 3 — Create the Variable Library IF it does not already exist (idempotent bootstrap)
-# 4 Guid variables; Development value set is the default, Production overrides each value.
-# The deployment pipeline activates 'Production' in the Prod stage so consumers resolve
-# Prod IDs there automatically. Re-running this notebook simply skips creation.
+# Cell 3 — Fabric REST helpers (resolve NAMES -> GUIDs). Control-plane only; no lakehouse.
+_FABRIC_BASE = "https://api.fabric.microsoft.com/v1"
+def fabric_rest(method, path, body=None):
+    token = notebookutils.credentials.getToken("https://api.fabric.microsoft.com")
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    resp = requests.request(
+        method, f"{_FABRIC_BASE}{path}", headers=headers,
+        data=json.dumps(body) if body is not None else None,
+    )
+    resp.raise_for_status()
+    return resp.json() if resp.text else {}
+
+def resolve_workspace_id(name):
+    wss = fabric_rest("GET", "/workspaces")["value"]
+    return next(w["id"] for w in wss if w["displayName"] == name)
+
+def resolve_item_id(workspace_id, display_name, item_type):
+    items = fabric_rest("GET", f"/workspaces/{workspace_id}/items?type={item_type}")["value"]
+    return next(i["id"] for i in items if i["displayName"] == display_name)
+
+# Cell 4 — Create the Variable Library IF it does not already exist (idempotent bootstrap)
+# Resolves each stage's GUIDs from the NAMES above. Development is the default value set;
+# Production overrides each value. The deployment pipeline activates 'Production' in Prod
+# so consumers resolve Prod IDs there. Re-running simply skips creation (no resolution).
+# NOTE: to seed BOTH value sets here, the identity creating the library must be able to
+# READ the Dev and Prod workspaces. After creation the library is the source of truth.
 existing = vlib.list_variable_libraries()
 _name_col = next((c for c in existing.columns if "name" in c.lower()), None)
 _already_exists = _name_col is not None and VL_NAME in existing[_name_col].tolist()
 if not _already_exists:
-    variables = [
-        {"name": "WorkspaceId",       "type": "Guid", "value": dev_workspace_id,
-         "note": "Current-stage workspace; all three lakehouses + DF/SM live here."},
-        {"name": "BronzeLakehouseId", "type": "Guid", "value": dev_bronze_lakehouse_id,
-         "note": "Bronze_LH id -> NB_01 default lakehouse."},
-        {"name": "SilverLakehouseId", "type": "Guid", "value": dev_silver_lakehouse_id,
-         "note": "Silver_LH id -> NB_02 default lakehouse + DF_Gold_PA SilverLakehouseId."},
-        {"name": "GoldLakehouseId",   "type": "Guid", "value": dev_gold_lakehouse_id,
-         "note": "Gold_LH id -> NB_03 default lakehouse + Gold_SM Direct Lake source."},
-    ]
+    def resolve_stage(ws_name):
+        ws_id = resolve_workspace_id(ws_name)
+        return {
+            "WorkspaceId":       ws_id,
+            "BronzeLakehouseId": resolve_item_id(ws_id, bronze_lakehouse_name, "Lakehouse"),
+            "SilverLakehouseId": resolve_item_id(ws_id, silver_lakehouse_name, "Lakehouse"),
+            "GoldLakehouseId":   resolve_item_id(ws_id, gold_lakehouse_name, "Lakehouse"),
+        }
+    dev  = resolve_stage(dev_workspace_name)
+    prod = resolve_stage(prod_workspace_name)
+
+    notes = {
+        "WorkspaceId":       "Current-stage workspace; all three lakehouses + DF/SM live here.",
+        "BronzeLakehouseId": "Bronze_LH id -> NB_01 default lakehouse.",
+        "SilverLakehouseId": "Silver_LH id -> NB_02 default lakehouse + DF_Gold_PA SilverLakehouseId.",
+        "GoldLakehouseId":   "Gold_LH id -> NB_03 default lakehouse + Gold_SM Direct Lake source.",
+    }
+    variables  = [{"name": k, "type": "Guid", "value": dev[k], "note": notes[k]} for k in notes]
     value_sets = [
-        {"name": "Development", "variableOverrides": [
-            {"name": "WorkspaceId",       "value": dev_workspace_id},
-            {"name": "BronzeLakehouseId", "value": dev_bronze_lakehouse_id},
-            {"name": "SilverLakehouseId", "value": dev_silver_lakehouse_id},
-            {"name": "GoldLakehouseId",   "value": dev_gold_lakehouse_id},
-        ]},
-        {"name": "Production", "variableOverrides": [
-            {"name": "WorkspaceId",       "value": prod_workspace_id},
-            {"name": "BronzeLakehouseId", "value": prod_bronze_lakehouse_id},
-            {"name": "SilverLakehouseId", "value": prod_silver_lakehouse_id},
-            {"name": "GoldLakehouseId",   "value": prod_gold_lakehouse_id},
-        ]},
+        {"name": "Development", "variableOverrides": [{"name": k, "value": dev[k]}  for k in notes]},
+        {"name": "Production",  "variableOverrides": [{"name": k, "value": prod[k]} for k in notes]},
     ]
     vlib.create_variable_library(
         name=VL_NAME,
@@ -99,11 +116,11 @@ if not _already_exists:
         value_sets_order=["Development", "Production"],
         description="CI/CD stage bindings consumed by notebooks, DF_Gold_PA, and (via this notebook) Gold_SM.",
     )
-    print(f"✅ Created Variable Library '{VL_NAME}' (Development default, Production override).")
+    print(f"✅ Created Variable Library '{VL_NAME}' from names (Dev default, Prod override).")
 else:
     print(f"ℹ Variable Library '{VL_NAME}' already exists — leaving it as the source of truth.")
 
-# Cell 4 — Read the ACTIVE Variable Library value set (single source of truth)
+# Cell 5 — Read the ACTIVE Variable Library value set (single source of truth)
 # Notebooks are a Variable Library consumer via NotebookUtils. getLibrary resolves the
 # value set that is ACTIVE in this workspace/stage (Dev IDs in Dev, Prod IDs in Prod).
 vl = notebookutils.variableLibrary.getLibrary(VL_NAME)
@@ -118,23 +135,7 @@ print(f"  BronzeLakehouseId  = {BRONZE_LAKEHOUSE_ID}")
 print(f"  SilverLakehouseId  = {SILVER_LAKEHOUSE_ID}")
 print(f"  GoldLakehouseId    = {GOLD_LAKEHOUSE_ID}")
 
-# Minimal Fabric REST helper (raw REST API, authenticated as the notebook identity).
-_FABRIC_BASE = "https://api.fabric.microsoft.com/v1"
-def fabric_rest(method, path, body=None):
-    token = notebookutils.credentials.getToken("https://api.fabric.microsoft.com")
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    resp = requests.request(
-        method, f"{_FABRIC_BASE}{path}", headers=headers,
-        data=json.dumps(body) if body is not None else None,
-    )
-    resp.raise_for_status()
-    return resp.json() if resp.text else {}
-
-def resolve_item_id(display_name, item_type):
-    items = fabric_rest("GET", f"/workspaces/{WORKSPACE_ID}/items?type={item_type}")["value"]
-    return next(i["id"] for i in items if i["displayName"] == display_name)
-
-# Cell 5 — (1) Bind each notebook's DEFAULT LAKEHOUSE to this stage's lakehouse
+# Cell 6 — (1) Bind each notebook's DEFAULT LAKEHOUSE to this stage's lakehouse
 # The default lakehouse lives in the notebook metadata ("dependencies.lakehouse").
 # We read each notebook's git-friendly definition, rewrite the three default-lakehouse
 # fields to the VL values, and push it back via Update Notebook Definition.
@@ -152,12 +153,12 @@ for nb_name, (lh_name, lh_id) in notebook_to_lakehouse.items():
     labs.notebook.update_notebook_definition(name=nb_name, notebook_content=src, workspace=WORKSPACE_ID)
     print(f"✅ {nb_name}: default lakehouse -> {lh_name} ({lh_id})")
 
-# Cell 6 — (2) Bind Dataflow Gen2 DF_Gold_PA parameters to this stage's Silver lakehouse
+# Cell 7 — (2) Bind Dataflow Gen2 DF_Gold_PA parameters to this stage's Silver lakehouse
 # DF Gen2 can't be rebound by a data-source rule; its parameters carry the IDs. We patch
 # the parameter DEFAULT literals inside the dataflow's mashup definition via REST.
 # Both Silver IDs live in this stage's single workspace, so SilverWorkspaceId = WorkspaceId.
 DATAFLOW_NAME = "DF_Gold_PA"
-df_id = resolve_item_id(DATAFLOW_NAME, "Dataflow")
+df_id = resolve_item_id(WORKSPACE_ID, DATAFLOW_NAME, "Dataflow")
 
 param_values = {
     "SilverWorkspaceId": WORKSPACE_ID,
@@ -187,7 +188,7 @@ else:
     print(f"⚠ {DATAFLOW_NAME}: no matching parameter literals found — verify parameter names "
           f"({', '.join(param_values)}) exist in the dataflow.")
 
-# Cell 7 — (3) Rebind Gold_SM (Direct Lake ON ONELAKE) to this stage's Gold_LH
+# Cell 8 — (3) Rebind Gold_SM (Direct Lake ON ONELAKE) to this stage's Gold_LH
 # A data-source deployment rule is NOT supported for Direct Lake on OneLake; instead we
 # regenerate the model's connection in code (the "connection-string parameter" the docs
 # mention). use_sql_endpoint=False == Direct Lake OVER ONELAKE (not the SQL endpoint).
@@ -204,7 +205,7 @@ print("✅ Gold_SM: Direct Lake on OneLake connection -> Gold_LH (this stage)")
 # Sanity check — confirm where the model now points (should be this stage's Gold_LH)
 print(directlake.get_direct_lake_sources("Gold_SM", workspace=WORKSPACE_ID))
 
-# Cell 8 — Summary
+# Cell 9 — Summary
 print("\nStage binding complete — all three bindings now point at this stage's items:")
 print(f"  Notebooks NB_01/02/03 -> Bronze/Silver/Gold_LH in workspace {WORKSPACE_ID}")
 print(f"  DF_Gold_PA            -> SilverWorkspaceId/SilverLakehouseId = {WORKSPACE_ID} / {SILVER_LAKEHOUSE_ID}")
