@@ -22,8 +22,7 @@ CI/CD:  GitHub (main) ─► GitHub Actions ─► Fabric Deployment Pipeline (w
 | `NB_0*.Notebook/` | Fabric Git notebook items (`.platform` + `notebook-content.py`) for Bronze→Silver→Gold |
 | `*_LH.Lakehouse/` | Fabric Git lakehouse items (Bronze / Silver / Gold) |
 | `dataflows/DF_Gold_PA.{pqt,m}` | Gold `production_daily` Dataflow Gen2 — `.pqt` template + `.m` source |
-| `pipelines/PL_Refresh_Master.{json,zip}` | End-to-end orchestration — `.json` Git source + `.zip` import template |
-| `semantic_model/Gold_SM.bim` + `definition.pbism` | DirectLake TMSL model over the Gold layer |
+| `pipelines/PL_Refresh_Master.zip` | End-to-end orchestration — one-click **import template** (a verified Fabric export) |
 | `deployment_rules/deployment_rules.json` | Reference for the per-stage Deployment Rules |
 | `github_actions/deploy-dev-to-prod.yml` | CD workflow: promotes Dev → Prod via the Fabric REST API |
 | `sample_data/*.csv` | Seed data for the Bronze layer |
@@ -40,7 +39,7 @@ CI/CD:  GitHub (main) ─► GitHub Actions ─► Fabric Deployment Pipeline (w
 
 ## Part A — Build the data
 
-**1. Prerequisites** — Fabric capacity (F2+); two workspaces (`ws-CICD-Dev`, `ws-CICD-Prod`); Git + GitHub integration enabled. For automation: an Entra service principal allowed to use Fabric APIs (full setup in Step 13).
+**1. Prerequisites** — Fabric capacity (F2+); two workspaces (`ws-CICD-Dev`, `ws-CICD-Prod`); Git + GitHub integration enabled. For automation: an Entra service principal allowed to use Fabric APIs (full setup in Step 14).
 
 **2. Create three lakehouses** in `ws-CICD-Dev` with these **exact** names: `Bronze_LH`, `Silver_LH`, `Gold_LH`. Notebooks write three-part names (e.g. `Bronze_LH.dbo.production_raw`), so names must match.
 
@@ -55,13 +54,11 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
 
 ## Part B — Add the analytics items
 
-**6. Import & run the data pipeline `PL_Refresh_Master`** — two ways:
-- **Via Git (recommended):** the `.json` arrives when you sync in Step 10; Fabric materializes the pipeline item.
-- **Via template:** New → Data pipeline → **Home → Import from a template** → `pipelines/PL_Refresh_Master.zip` (this is a verified Fabric export and imports + saves cleanly). The five activities import pre-wired.
+**6. Import & run the data pipeline `PL_Refresh_Master`** — New → Data pipeline → **Home → Import from a template** → `pipelines/PL_Refresh_Master.zip`. The five activities import pre-wired in this order: `NB_Setup → NB_01 → NB_02 → DF_Gold_PA → NB_03`, each gated on the previous. One run = full end-to-end Gold build.
 
-  Fabric pipelines reference items by **literal GUID** (that's what Fabric exports — expression-based `notebookId`/`workspaceId` makes the importer hang). The shipped GUIDs point at the author's workspace, so after a template import into **your** workspace **re-bind each activity**: the four Notebook activities → `NB_Setup`/`NB_01`/`NB_02`/`NB_03`; the Dataflow activity → `DF_Gold_PA`. If you sync via Git into the same workspace, or promote through the Deployment Pipeline, the GUIDs are re-paired automatically (Step 11) — no manual rebind.
+  The activities reference items by GUID, and the shipped GUIDs point at the author's workspace — so after importing, **open each activity and re-pick your own item**: the four Notebook activities → `NB_Setup`/`NB_01`/`NB_02`/`NB_03`; the Dataflow activity → `DF_Gold_PA`. (Syncing via Git or promoting through the Deployment Pipeline re-pairs these automatically — manual re-pick is only for a fresh template import.)
 
-  Run order: `NB_Setup → NB_01 → NB_02 → DF_Gold_PA → NB_03`, each gated on the previous. One run = full end-to-end Gold build.
+  > Once you commit from Fabric (Step 10), the pipeline serializes into Git as its own `PL_Refresh_Master.DataPipeline/` folder — that becomes the source of truth. The `.zip` is only the first-time import.
 
 **7. Build the Gold Dataflow `DF_Gold_PA`** (required — builds `production_daily`):
 1. **+ New item → Dataflow Gen2**, name it `DF_Gold_PA`.
@@ -71,9 +68,7 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
 
    (Manual fallback: paste each `let … in …` body from `DF_Gold_PA.m` into a Blank query — omit the `section`/`shared` lines.)
 
-**8. Create the semantic model `Gold_SM`** — `semantic_model/Gold_SM.bim` is a DirectLake TMSL model over the four Gold tables (`production_daily`, `cost_monthly`, `schedule_summary`, `field_kpi_facts`) plus a calculated `DateDim`, with measures already defined.
-- **From the `.bim` (recommended):** open in Tabular Editor / Power BI Desktop, point the DirectLake source at this workspace's `Gold_LH` SQL endpoint, deploy as `Gold_SM`. Everything below (DateDim, columns, relationships, measures) is already in the file — nothing to re-type. Publish from modern tooling so the model has **Enhanced Metadata** (mandatory for Deployment Pipelines). Copy its GUID for the `SemanticModelId` Deployment Rule.
-- **From Fabric (click-through):** open `Gold_LH` → **New semantic model** → tick the four Gold tables → Confirm, then add the date dimension, relationship and measures by hand:
+**8. Create the semantic model `Gold_SM`** — open `Gold_LH` → **New semantic model** → tick the four Gold tables (`production_daily`, `cost_monthly`, `schedule_summary`, `field_kpi_facts`) → Confirm, then add the date dimension, relationships and measures by hand (a–c below). Publish so the model has **Enhanced Metadata** (mandatory for Deployment Pipelines). After you commit from Fabric (Step 10), the model serializes into Git as `Gold_SM.SemanticModel/` (TMDL) — that's the source of truth; copy its GUID for the `SemanticModelId` Deployment Rule.
 
   **a. Calculated table `DateDim`** — Model view → **New table**, paste:
   ```DAX
@@ -95,17 +90,22 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
 
   `cost_monthly` and `schedule_summary` are **intentionally not related** — they're pre-aggregated at different grains (monthly / by priority) and each visual slices them by their own `field` / `cost_type` / `priority` columns. Joining the summary tables on `field` would fan out into ambiguous many-to-many and inflate sums. To enable one `field` slicer across all tables, add a `DimField` dimension (one row per field) and relate `DimField[field]` 1→* to each table — that's an optional star-schema enhancement, not part of this demo.
 
-  **c. Measures** — create on the table shown in parentheses (right-click table → **New measure**). These are the headline ones used by the report; the `.bim` has more:
-  ```DAX
-  Total BOE        = SUM(production_daily[total_boe])                 -- (production_daily)
-  BOE Last Day     = CALCULATE(SUM(production_daily[total_boe]), LASTDATE(production_daily[date]))
-  Total Cost (USD) = SUM(cost_monthly[total_cost_usd])               -- (cost_monthly)
-  OPEX Total       = CALCULATE(SUM(cost_monthly[total_cost_usd]), cost_monthly[cost_type] = "OPEX")
-  CAPEX Total      = CALCULATE(SUM(cost_monthly[total_cost_usd]), cost_monthly[cost_type] = "CAPEX")
-  ```
-  Set format strings (`#,##0.00` for BOE, `$ #,##0` for cost). Save.
+  **c. Measures** — a measure's *home table* (where you create it) is just where it appears in the Fields pane; it doesn't affect the result. Create each group below by right-clicking that table in the Fields pane → **New measure**, pasting the DAX, and setting its format.
 
-> ⚠️ **`production_daily` missing from the table picker?** Tables written by **Dataflow Gen2** (`production_daily`) appear in the SQL analytics endpoint / OneLake picker **after a metadata sync**, while Spark/notebook tables show immediately. If the New-semantic-model dialog lists only `cost_monthly` / `schedule_summary` / `field_kpi_facts`: open **`Gold_LH` → SQL analytics endpoint**, click **Refresh** (or the ⟳ icon in the table picker), wait a few seconds, and re-open the dialog. The `.bim` already defines `production_daily`, so the Git/`.bim` path is unaffected — this is only the live picker lagging.
+  On **`production_daily`**:
+  ```DAX
+  Total BOE    = SUM(production_daily[total_boe])                                               // format: #,##0.00
+  BOE Last Day = CALCULATE(SUM(production_daily[total_boe]), LASTDATE(production_daily[date]))   // format: #,##0.00
+  ```
+  On **`cost_monthly`**:
+  ```DAX
+  Total Cost (USD) = SUM(cost_monthly[total_cost_usd])                                          // format: $ #,##0
+  OPEX Total       = CALCULATE(SUM(cost_monthly[total_cost_usd]), cost_monthly[cost_type] = "OPEX")    // $ #,##0
+  CAPEX Total      = CALCULATE(SUM(cost_monthly[total_cost_usd]), cost_monthly[cost_type] = "CAPEX")   // $ #,##0
+  ```
+  These are the measures the report uses; add more if you like. **Save.**
+
+> ⚠️ **`production_daily` missing from the table picker?** Tables written by **Dataflow Gen2** (`production_daily`) appear in the SQL analytics endpoint / OneLake picker **after a metadata sync**, while Spark/notebook tables show immediately. If the New-semantic-model dialog lists only `cost_monthly` / `schedule_summary` / `field_kpi_facts`: open **`Gold_LH` → SQL analytics endpoint**, click **Refresh** (or the ⟳ icon in the table picker), wait a few seconds, and re-open the dialog — this is only the live picker lagging.
 
 **9. Build the report `Gold_Dashboard`** — New → Report → live-connect to `Gold_SM` (DirectLake, never Import). Add cards for `Total BOE` / `Total Cost (USD)`, a line chart by `DateDim[Date]`, and a column chart by `field`. Save as `Gold_Dashboard`.
 
@@ -167,7 +167,7 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
 - **One manual rule** — only the `Gold_SM` data-source binding is set as a deployment rule; everything else item-related auto-pairs.
 - **One manual repoint** — the Dataflow Gen2 source/destination connections don't auto-rebind, so `DF_Gold_PA` is repointed once per target workspace (Step 13.3). Parameterizing those IDs is the first automation win.
 - **One-command refresh** — `PL_Refresh_Master` runs `NB_Setup → NB_01 → NB_02 → DF_Gold_PA → NB_03` in dependency order, so post-deploy data load is a single click (or one REST call).
-- **One artifact, two delivery paths** — the `.json` is the Git/source reference; the `.zip` is the one-click import template. Same activities, same order, same literal-GUID shape.
+- **One-click pipeline import** — `PL_Refresh_Master.zip` is a verified Fabric export, so it imports and saves without hanging; after the first Fabric commit, Git's `PL_Refresh_Master.DataPipeline/` folder takes over as the source of truth.
 
 ## Key limitations
 
@@ -176,7 +176,7 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
 | Git | Sensitivity labels block commits; 50 MB/commit; Admin-only connect; no MyWorkspace | Remove labels; batch commits; pre-configure; use named workspaces |
 | Deploy | Lakehouse copies structure, not data | Run `PL_Refresh_Master` after each deploy |
 | Deploy | Items added after assignment aren't auto-paired; same-name unpaired items duplicate | Build all items first, verify pairing before deploying |
-| Deploy | Semantic models need Enhanced Metadata | Publish from modern Power BI Desktop / Tabular Editor |
+| Deploy | Semantic models need Enhanced Metadata | Models created via Fabric **New semantic model** already have it; if authored externally, publish from modern Power BI Desktop / Tabular Editor |
 | Notebook | Attached-lakehouse GUIDs are workspace-specific | Keep `dependencies` empty in Git; re-attach per workspace (Step 4) |
 | Dataflow | Source/destination connections don't auto-rebind on deploy | Repoint `DF_Gold_PA` to the Prod lakehouses once after deploy (Step 13.3) |
 | Dataflow | New tables lag the SQL endpoint / picker | Refresh the Gold_LH SQL endpoint (Step 8 note) |
