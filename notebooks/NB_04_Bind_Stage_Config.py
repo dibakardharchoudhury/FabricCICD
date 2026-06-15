@@ -64,7 +64,7 @@ gold_lakehouse_name   = "Gold_LH"
 #   then pre-installed on the Spark pool — faster, reproducible, and version-pinned.
 #   See: https://learn.microsoft.com/fabric/data-engineering/environment-manage-library
 %pip install -q semantic-link-labs
-import json, base64, re, requests, io, contextlib
+import json, base64, re, requests, io, contextlib, time
 import sempy_labs as labs
 from sempy_labs import directlake
 from sempy_labs import variable_library as vlib
@@ -82,6 +82,45 @@ def _quiet():
 
 # Cell 3 — Fabric REST helpers (resolve NAMES -> GUIDs). Control-plane only; no lakehouse.
 _FABRIC_BASE = "https://api.fabric.microsoft.com/v1"
+
+def _poll_lro(initial_resp, headers):
+    """Poll a Fabric long-running operation (HTTP 202) to completion and return its result.
+    getDefinition/updateDefinition are async: the first call returns 202 + a Location header
+    pointing at the operation status. We poll until Succeeded, then GET the operation result
+    (the actual definition payload). Returns {} for operations that have no result body.
+
+    Tuned for speed: notebook/dataflow definitions are small (source, not data), so these
+    operations usually finish almost immediately. Rather than always waiting the server's
+    Retry-After (often 2s+), we start with a short 0.4s poll and back off geometrically up
+    to a 5s cap. This returns small ops in well under a second while still being polite for
+    rare slow ones. If the server sends an explicit Retry-After we honour it as a floor."""
+    op_url = initial_resp.headers.get("Location")
+    if not op_url:
+        return {}
+    delay     = 0.4   # first poll fires quickly — most ops are already done
+    max_delay = 5.0   # cap so a slow op never busy-waits too tightly
+    while True:
+        time.sleep(delay)
+        poll = requests.get(op_url, headers=headers)
+        if not poll.ok:
+            raise RuntimeError(
+                f"Fabric LRO status poll failed: HTTP {poll.status_code} {poll.reason}.\n"
+                f"Response: {poll.text[:800] if poll.text else '(empty)'}"
+            )
+        state  = poll.json() if poll.text else {}
+        status = state.get("status")
+        if status == "Succeeded":
+            break
+        if status == "Failed":
+            raise RuntimeError(f"Fabric long-running operation failed: {state}")
+        # Still running: back off geometrically, but never below a server-requested Retry-After.
+        server_floor = float(poll.headers.get("Retry-After", 0) or 0)
+        delay = max(min(delay * 1.6, max_delay), server_floor)
+    # Operation done — fetch the result payload (present for getDefinition; absent for updates).
+    result_url = poll.headers.get("Location") or (op_url.rstrip("/") + "/result")
+    res = requests.get(result_url, headers=headers)
+    return res.json() if (res.ok and res.text) else {}
+
 def fabric_rest(method, path, body=None):
     """Call the Fabric REST API and surface a clear error if it fails."""
     token = notebookutils.credentials.getToken("https://api.fabric.microsoft.com")
@@ -101,6 +140,9 @@ def fabric_rest(method, path, body=None):
             f"Fabric REST {method} {path} failed: HTTP {resp.status_code} {resp.reason}.{hint}\n"
             f"Response: {detail}"
         )
+    # 202 Accepted -> long-running operation: poll to completion and return its result.
+    if resp.status_code == 202:
+        return _poll_lro(resp, headers)
     return resp.json() if resp.text else {}
 
 def resolve_workspace_id(name):
