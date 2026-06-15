@@ -157,11 +157,24 @@ demo, or continue to Part B to add the pipelines, semantic model, and report.
 
 ### Step 6 — Import & run the data pipelines
 The two Data Factory pipelines in `pipelines/` give you orchestration and file-based
-ingestion (pipeline type #1). Bring them into the workspace one of two ways:
+ingestion (pipeline type #1). The `.json` files here are **Git-integration item
+definitions**, so bring them into the workspace one of two ways:
 
-- **Via Git (recommended):** they arrive automatically when you sync the repo in Step 10.
-- **Manually now:** in the workspace choose **New → Data pipeline**, then use
-  **… → Import** (or recreate the activities) from the JSON definitions.
+- **Via Git (recommended):** they arrive automatically when you sync the repo in
+  Step 10 — Fabric materializes the `.json` definitions into real pipeline items. This
+  is the supported path for the files in this repo.
+- **Manually via a template `.zip`:** the pipeline editor's **Home → Import** button
+  only accepts a **template `.zip`** (the kind produced by **Home → Export**), *not* a
+  raw Git `.json`. So to import manually you either:
+  1. Get a `.zip` — have a colleague open the pipeline and **Home → Export** (saves a
+     `<pipeline>.zip`), then **New → Data pipeline → Home → Import**, pick the `.zip`,
+     map connections, and **Use this template**; or
+  2. Rebuild it — **New → Data pipeline** and recreate the activities, using the
+     `pipelines/*.json` here as the reference for activities and parameters.
+
+> 📌 You can't feed `PL_Copy_Bronze_Ingest.json` / `PL_Refresh_Master.json` straight
+> into the **Import** dialog — that dialog expects an exported template `.zip`. Use Git
+> integration (Step 10) to bring these exact definitions in unchanged.
 
 Then:
 1. Open **`PL_Copy_Bronze_Ingest`** — point its source at the CSVs in **OneLake Files**
