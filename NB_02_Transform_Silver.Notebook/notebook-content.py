@@ -6,6 +6,36 @@
 # META   "kernel_info": {
 # META     "name": "synapse_pyspark"
 # META   },
+# META   "dependencies": {
+# META     "lakehouse": {
+# META       "default_lakehouse": "4207398e-6d15-4407-8d8d-cbb50d661ec6",
+# META       "default_lakehouse_name": "Silver_LH",
+# META       "default_lakehouse_workspace_id": "292e18c3-b95e-42d1-bb02-9a2064fee5b8",
+# META       "known_lakehouses": [
+# META         {
+# META           "id": "06434335-fbfd-4d2b-879d-4962bdd8d605"
+# META         },
+# META         {
+# META           "id": "4207398e-6d15-4407-8d8d-cbb50d661ec6"
+# META         },
+# META         {
+# META           "id": "cee2ea93-ccb4-4bb3-8338-4a91840b9509"
+# META         }
+# META       ]
+# META     }
+# META   }
+# META }
+
+# CELL ********************
+
+# Fabric notebook source
+
+# METADATA ********************
+
+# META {
+# META   "kernel_info": {
+# META     "name": "synapse_pyspark"
+# META   },
 # META   "dependencies": {}
 # META }
 
@@ -123,6 +153,15 @@ for tbl in ["production_conformed", "cost_conformed", "schedule_conformed"]:
 
 print("\n🏆 Silver transformation COMPLETE")
 print("Next: Run NB_03_Aggregate_Gold")
+
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
 
 
 # METADATA ********************

@@ -1,0 +1,9 @@
+relationship ba371770-ac61-4ae9-b267-ec72ea09ecf2
+	joinOnDateBehavior: datePartOnly
+	fromColumn: DateDim.Date
+	toColumn: LocalDateTable_a8ecbb02-72e5-4ecb-a9cb-bd65d9767ecb.Date
+
+relationship d79164e8-098d-591b-8aae-00c04a38e811
+	fromColumn: production_daily.date
+	toColumn: DateDim.Date
+

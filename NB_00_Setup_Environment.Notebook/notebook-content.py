@@ -6,21 +6,45 @@
 # META   "kernel_info": {
 # META     "name": "synapse_pyspark"
 # META   },
+# META   "dependencies": {
+# META     "lakehouse": {
+# META       "default_lakehouse": "cee2ea93-ccb4-4bb3-8338-4a91840b9509",
+# META       "default_lakehouse_name": "Bronze_LH",
+# META       "default_lakehouse_workspace_id": "292e18c3-b95e-42d1-bb02-9a2064fee5b8",
+# META       "known_lakehouses": [
+# META         {
+# META           "id": "cee2ea93-ccb4-4bb3-8338-4a91840b9509"
+# META         }
+# META       ]
+# META     }
+# META   }
+# META }
+
+# MARKDOWN ********************
+
+# # ⚠️ One-time setup per workspace — attach the lakehouses
+# # 
+# ##### After syncing from Git into a workspace (Dev / Test / Prod), open **NB_01**, **NB_02** and **NB_03** and in the **Explorer → Lakehouses** pane add **all three** lakehouses (`Bronze_LH`, `Silver_LH`, `Gold_LH`), then set one as the default. 
+# ##### The notebooks ship with an empty `"dependencies": {}` block because attached-lakehouse GUIDs are workspace-specific and must not be committed to Git. ##### Without attaching, the three-part table names (e.g. `Silver_LH.dbo.production_conformed`) fail with `[SCHEMA_NOT_FOUND]`.
+# 
+# ##### `NB_00` itself needs no lakehouse — it only verifies the three exist (below).
+
+# CELL ********************
+
+# Fabric notebook source
+
+# METADATA ********************
+
+# META {
+# META   "kernel_info": {
+# META     "name": "synapse_pyspark"
+# META   },
 # META   "dependencies": {}
 # META }
 
 # MARKDOWN ********************
 
-# ## ⚠️ One-time setup per workspace — attach the lakehouses
-# 
-# After syncing from Git into a workspace (Dev / Prod), open **NB_01**, **NB_02**
-# and **NB_03** and in the **Explorer → Lakehouses** pane add **all three** lakehouses
-# (`Bronze_LH`, `Silver_LH`, `Gold_LH`), then set one as the default. The notebooks ship
-# with an empty `"dependencies": {}` block because attached-lakehouse GUIDs are
-# workspace-specific and must not be committed to Git. Without attaching, the three-part
-# table names (e.g. `Silver_LH.dbo.production_conformed`) fail with `[SCHEMA_NOT_FOUND]`.
-# 
-# `NB_00` itself needs no lakehouse — it only verifies the three exist (below).
+
 
 # METADATA ********************
 
@@ -37,11 +61,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Cell 1 — Parameters (edit these for your environment)
-WORKSPACE_NAME = "ws-CICD-Dev"       # Your Fabric workspace name
+WORKSPACE_NAME = "ws-CICD-DevTest"   # Your Fabric workspace name
 BRONZE_LH      = "Bronze_LH"        # Bronze Lakehouse name
 SILVER_LH      = "Silver_LH"        # Silver Lakehouse name
 GOLD_LH        = "Gold_LH"          # Gold Lakehouse name
-ENVIRONMENT    = "dev"               # dev | prod — set via pipeline parameter
+ENVIRONMENT    = "dev"               # dev | test | prod — set via pipeline parameter
 
 print(f"Environment: {ENVIRONMENT}")
 print(f"Workspace:   {WORKSPACE_NAME}")
@@ -66,6 +90,14 @@ for lh in [BRONZE_LH, SILVER_LH, GOLD_LH]:
     else:
         print(f"❌ {lh}: not found in workspace '{WORKSPACE_NAME}'")
         print(f"   → Create lakehouse '{lh}' in Fabric before running this notebook")
+
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
 
 
 # METADATA ********************

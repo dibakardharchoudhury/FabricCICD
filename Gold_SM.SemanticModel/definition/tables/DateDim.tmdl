@@ -1,0 +1,56 @@
+table DateDim
+	lineageTag: 640ca846-3d6f-4fc0-9a20-f52db15eb032
+
+	column Date
+		formatString: General Date
+		lineageTag: 94932c80-855f-4465-8a7d-79a9dbf60942
+		summarizeBy: none
+		isNameInferred
+		sourceColumn: [Date]
+
+		variation Variation
+			isDefault
+			relationship: ba371770-ac61-4ae9-b267-ec72ea09ecf2
+			defaultHierarchy: LocalDateTable_a8ecbb02-72e5-4ecb-a9cb-bd65d9767ecb.'Date Hierarchy'
+
+		annotation SummarizationSetBy = Automatic
+
+	column Year = YEAR([Date])
+		formatString: 0
+		lineageTag: 8dd55938-9f5a-4d44-8ae7-695f35c005cd
+		summarizeBy: sum
+
+		annotation SummarizationSetBy = Automatic
+
+	column Month = MONTH([Date])
+		formatString: 0
+		lineageTag: e7ef6acd-bebb-4d02-8086-c2cf9f44aab2
+		summarizeBy: sum
+
+		annotation SummarizationSetBy = Automatic
+
+	column MonthName = FORMAT([Date], "MMM YYYY")
+		lineageTag: b1f43d33-d5aa-4f58-ade0-99497f84bc5a
+		summarizeBy: none
+
+		annotation SummarizationSetBy = Automatic
+
+	column Quarter = "Q" & QUARTER([Date])
+		lineageTag: 8055540f-902f-4c02-b5da-aa1f5358adb1
+		summarizeBy: none
+
+		annotation SummarizationSetBy = Automatic
+
+	column WeekNumber = WEEKNUM([Date])
+		formatString: 0
+		lineageTag: f9319f9d-f278-4fd1-a241-a8960bd726d1
+		summarizeBy: sum
+
+		annotation SummarizationSetBy = Automatic
+
+	partition DateDim = calculated
+		mode: import
+		source = CALENDAR(DATE(2024,1,1), DATE(2024,12,31))
+
+	annotation PBI_Id = c4126cf4953940d9a1cb96bf1991917e
+

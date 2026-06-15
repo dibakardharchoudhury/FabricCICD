@@ -1,0 +1,43 @@
+{
+  "formatVersion": "202502",
+  "computeEngineSettings": {
+    "allowModernEvaluationEngine": true
+  },
+  "name": "DF_Gold_PA",
+  "queryGroups": [],
+  "documentLocale": "en-US",
+  "queriesMetadata": {
+    "SilverWorkspaceId": {
+      "queryId": "68928e2e-0695-42ca-88ae-6264ed59496c",
+      "queryName": "SilverWorkspaceId",
+      "loadEnabled": false
+    },
+    "SilverLakehouseId": {
+      "queryId": "250e237c-ad9b-4d97-b798-fc3a778df769",
+      "queryName": "SilverLakehouseId",
+      "loadEnabled": false
+    },
+    "SilverProduction": {
+      "queryId": "1c8c08ff-f29d-4141-be04-31e639010693",
+      "queryName": "SilverProduction",
+      "loadEnabled": false
+    },
+    "GoldProductionDaily": {
+      "queryId": "3227b85e-4cb5-4b86-a091-ad2a64ae3114",
+      "queryName": "GoldProductionDaily"
+    },
+    "SilverProduction_DataDestination": {
+      "queryId": "e9853514-812a-42e5-94f9-5664ddaccb1e",
+      "queryName": "SilverProduction_DataDestination",
+      "isHidden": true,
+      "loadEnabled": false
+    }
+  },
+  "connections": [
+    {
+      "path": "Lakehouse",
+      "kind": "Lakehouse",
+      "connectionId": "{\"ClusterId\":\"89571e2a-2e60-4ba3-bca5-48f3d1b6a2a8\",\"DatasourceId\":\"88a14e43-9e3d-417a-8e7b-38445c38f25a\"}"
+    }
+  ]
+}

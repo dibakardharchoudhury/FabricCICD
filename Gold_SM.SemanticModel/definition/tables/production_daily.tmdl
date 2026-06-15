@@ -1,0 +1,119 @@
+table production_daily
+	lineageTag: b781b207-21ed-4d43-8d56-6cd886fca550
+	sourceLineageTag: [dbo].[production_daily]
+
+	measure 'Total BOE' = SUM(production_daily[total_boe])                                               // format: #,##0.00
+		lineageTag: 67e39f72-faa7-4a39-8577-25e5a2203d71
+
+		changedProperty = Name
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'BOE Last Day' = CALCULATE(SUM(production_daily[total_boe]), LASTDATE(production_daily[date]))   // format: #,##0.00
+		lineageTag: 1f2d25c2-36f0-46cf-98a4-847e1723de7d
+
+		changedProperty = Name
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column date
+		dataType: dateTime
+		formatString: General Date
+		lineageTag: 6de120cd-24fe-48aa-9a50-88a2f4f79c04
+		sourceLineageTag: date
+		summarizeBy: none
+		sourceColumn: date
+
+		annotation SummarizationSetBy = Automatic
+
+	column field
+		dataType: string
+		lineageTag: df918324-91e0-40fb-b1a8-85489ae9c70f
+		sourceLineageTag: field
+		summarizeBy: none
+		sourceColumn: field
+
+		annotation SummarizationSetBy = Automatic
+
+	column total_oil_bbl
+		dataType: double
+		lineageTag: ff7d115c-573c-46bb-9262-e6b822c78958
+		sourceLineageTag: total_oil_bbl
+		summarizeBy: sum
+		sourceColumn: total_oil_bbl
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column total_gas_mcf
+		dataType: double
+		lineageTag: ddbece6d-755e-44a8-af90-d7083ea3f740
+		sourceLineageTag: total_gas_mcf
+		summarizeBy: sum
+		sourceColumn: total_gas_mcf
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column total_water_bbl
+		dataType: double
+		lineageTag: e09f963e-9747-4c08-87f0-8956e07a9d7c
+		sourceLineageTag: total_water_bbl
+		summarizeBy: sum
+		sourceColumn: total_water_bbl
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column total_boe
+		dataType: double
+		lineageTag: 9052078e-f498-47eb-a7b4-08f7669554a3
+		sourceLineageTag: total_boe
+		summarizeBy: sum
+		sourceColumn: total_boe
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column avg_water_cut_pct
+		dataType: double
+		lineageTag: c4508510-f764-4c38-b1d8-101ef7a0ed8e
+		sourceLineageTag: avg_water_cut_pct
+		summarizeBy: sum
+		sourceColumn: avg_water_cut_pct
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column active_well_count
+		dataType: int64
+		formatString: 0
+		lineageTag: 8bd08a40-dfdd-4915-935c-a59c32807cd1
+		sourceLineageTag: active_well_count
+		summarizeBy: sum
+		sourceColumn: active_well_count
+
+		annotation SummarizationSetBy = Automatic
+
+	column report_generated_at
+		dataType: dateTime
+		formatString: General Date
+		lineageTag: b0dbf188-c790-4532-88ac-be578d96cc76
+		sourceLineageTag: report_generated_at
+		summarizeBy: none
+		sourceColumn: report_generated_at
+
+		annotation SummarizationSetBy = Automatic
+
+	partition production_daily = entity
+		mode: directLake
+		source
+			entityName: production_daily
+			schemaName: dbo
+			expressionSource: 'DirectLake - Gold_LH'
+

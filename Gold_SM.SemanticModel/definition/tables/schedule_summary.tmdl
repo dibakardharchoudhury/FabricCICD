@@ -1,0 +1,89 @@
+table schedule_summary
+	lineageTag: a4bcd9fa-70f2-4fe2-973b-6b57dde5ad00
+	sourceLineageTag: [dbo].[schedule_summary]
+
+	column field
+		dataType: string
+		lineageTag: 77ddb4da-3d8b-49ad-8129-8232438fcccd
+		sourceLineageTag: field
+		summarizeBy: none
+		sourceColumn: field
+
+		annotation SummarizationSetBy = Automatic
+
+	column priority
+		dataType: string
+		lineageTag: a552e22c-7284-496d-b70a-6ac99100f5dc
+		sourceLineageTag: priority
+		summarizeBy: none
+		sourceColumn: priority
+
+		annotation SummarizationSetBy = Automatic
+
+	column status
+		dataType: string
+		lineageTag: 162cc8a7-3d9a-43c9-ac47-84ef79a01579
+		sourceLineageTag: status
+		summarizeBy: none
+		sourceColumn: status
+
+		annotation SummarizationSetBy = Automatic
+
+	column activity_count
+		dataType: int64
+		formatString: 0
+		lineageTag: 0f4f3638-b0fe-4be1-85ff-7b09b88a402c
+		sourceLineageTag: activity_count
+		summarizeBy: sum
+		sourceColumn: activity_count
+
+		annotation SummarizationSetBy = Automatic
+
+	column avg_duration_days
+		dataType: double
+		lineageTag: c9b42103-411b-4a1a-afcc-46c1073359f0
+		sourceLineageTag: avg_duration_days
+		summarizeBy: sum
+		sourceColumn: avg_duration_days
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column critical_count
+		dataType: int64
+		formatString: 0
+		lineageTag: 2f8ead6b-c104-420d-95ab-6aefb756199f
+		sourceLineageTag: critical_count
+		summarizeBy: sum
+		sourceColumn: critical_count
+
+		annotation SummarizationSetBy = Automatic
+
+	column in_progress_count
+		dataType: int64
+		formatString: 0
+		lineageTag: 60b01368-645a-4e9b-8b92-424b6f329916
+		sourceLineageTag: in_progress_count
+		summarizeBy: sum
+		sourceColumn: in_progress_count
+
+		annotation SummarizationSetBy = Automatic
+
+	column report_generated_at
+		dataType: dateTime
+		formatString: General Date
+		lineageTag: 6044f185-53cc-4143-accd-809529b6a30f
+		sourceLineageTag: report_generated_at
+		summarizeBy: none
+		sourceColumn: report_generated_at
+
+		annotation SummarizationSetBy = Automatic
+
+	partition schedule_summary = entity
+		mode: directLake
+		source
+			entityName: schedule_summary
+			schemaName: dbo
+			expressionSource: 'DirectLake - Gold_LH'
+

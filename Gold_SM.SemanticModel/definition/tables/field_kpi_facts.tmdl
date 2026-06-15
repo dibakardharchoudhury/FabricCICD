@@ -1,0 +1,85 @@
+table field_kpi_facts
+	lineageTag: cbff9a80-717a-4c50-b404-819771f564be
+	sourceLineageTag: [dbo].[field_kpi_facts]
+
+	column field
+		dataType: string
+		lineageTag: 06b14639-0d75-43a1-99da-4ca4c6f1087a
+		sourceLineageTag: field
+		summarizeBy: none
+		sourceColumn: field
+
+		annotation SummarizationSetBy = Automatic
+
+	column avg_daily_boe
+		dataType: double
+		lineageTag: 2a8cc40d-4ed7-4cd0-a39d-c4d9b81fe5bf
+		sourceLineageTag: avg_daily_boe
+		summarizeBy: sum
+		sourceColumn: avg_daily_boe
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column cumulative_oil_bbl
+		dataType: double
+		lineageTag: 26a82b2a-0644-48e9-b727-5c122326956e
+		sourceLineageTag: cumulative_oil_bbl
+		summarizeBy: sum
+		sourceColumn: cumulative_oil_bbl
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column avg_active_wells
+		dataType: double
+		lineageTag: 94d68ece-baec-4f0b-921a-de4b24df6294
+		sourceLineageTag: avg_active_wells
+		summarizeBy: sum
+		sourceColumn: avg_active_wells
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column total_cost_usd
+		dataType: double
+		lineageTag: 33ab7fa0-fb35-4485-a40d-88d781dfaa77
+		sourceLineageTag: total_cost_usd
+		summarizeBy: sum
+		sourceColumn: total_cost_usd
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column avg_cost_per_boe
+		dataType: double
+		lineageTag: 1fc8edbc-55a3-4bfe-ad1f-9c3b448d32c3
+		sourceLineageTag: avg_cost_per_boe
+		summarizeBy: sum
+		sourceColumn: avg_cost_per_boe
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column report_generated_at
+		dataType: dateTime
+		formatString: General Date
+		lineageTag: dfbd66b8-6941-4019-8217-499196d4dc3c
+		sourceLineageTag: report_generated_at
+		summarizeBy: none
+		sourceColumn: report_generated_at
+
+		annotation SummarizationSetBy = Automatic
+
+	partition field_kpi_facts = entity
+		mode: directLake
+		source
+			entityName: field_kpi_facts
+			schemaName: dbo
+			expressionSource: 'DirectLake - Gold_LH'
+

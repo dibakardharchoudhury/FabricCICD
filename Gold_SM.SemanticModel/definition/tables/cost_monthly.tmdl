@@ -1,0 +1,112 @@
+table cost_monthly
+	lineageTag: eca6f566-f6ae-492f-863f-a52d215d912f
+	sourceLineageTag: [dbo].[cost_monthly]
+
+	measure 'Total Cost (USD)' = SUM(cost_monthly[total_cost_usd])
+		lineageTag: b501adcb-7d5d-4294-b52b-a078a153fd9e
+
+		changedProperty = Name
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'OPEX Total' = CALCULATE(SUM(cost_monthly[total_cost_usd]), cost_monthly[cost_type] = "OPEX")    // $ #,##0
+		lineageTag: 49764693-cade-4945-b8b1-1acca3913982
+
+		changedProperty = Name
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'CAPEX Total' = CALCULATE(SUM(cost_monthly[total_cost_usd]), cost_monthly[cost_type] = "CAPEX")   // $ #,##0
+		lineageTag: 6ea6c0d7-3909-4a33-845c-bb3ff5dfad47
+
+		changedProperty = Name
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column year_month
+		dataType: string
+		lineageTag: 2339c0a7-5b16-41bc-be71-c2bd57928e91
+		sourceLineageTag: year_month
+		summarizeBy: none
+		sourceColumn: year_month
+
+		annotation SummarizationSetBy = Automatic
+
+	column field
+		dataType: string
+		lineageTag: 53d13d71-03d9-4b4a-b553-7f9b5dac34d9
+		sourceLineageTag: field
+		summarizeBy: none
+		sourceColumn: field
+
+		annotation SummarizationSetBy = Automatic
+
+	column cost_type
+		dataType: string
+		lineageTag: 33c2e22e-75ac-488b-9b99-878ec1d1ddad
+		sourceLineageTag: cost_type
+		summarizeBy: none
+		sourceColumn: cost_type
+
+		annotation SummarizationSetBy = Automatic
+
+	column total_cost_usd
+		dataType: double
+		lineageTag: d816dfcc-6e7b-4561-b078-a2a3e19e08f8
+		sourceLineageTag: total_cost_usd
+		summarizeBy: sum
+		sourceColumn: total_cost_usd
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column avg_cost_per_boe
+		dataType: double
+		lineageTag: b378e44a-fbc6-4d7f-a4d6-a48d4db1dff9
+		sourceLineageTag: avg_cost_per_boe
+		summarizeBy: sum
+		sourceColumn: avg_cost_per_boe
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column transaction_count
+		dataType: int64
+		formatString: 0
+		lineageTag: b4dac523-9c1d-4a1d-8915-335e6db0a629
+		sourceLineageTag: transaction_count
+		summarizeBy: sum
+		sourceColumn: transaction_count
+
+		annotation SummarizationSetBy = Automatic
+
+	column max_single_cost_usd
+		dataType: double
+		lineageTag: bbc392cf-e6c5-4920-8e29-ddfcc677a7ab
+		sourceLineageTag: max_single_cost_usd
+		summarizeBy: sum
+		sourceColumn: max_single_cost_usd
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column report_generated_at
+		dataType: dateTime
+		formatString: General Date
+		lineageTag: b3ef1a13-abd1-4fe1-8dfe-5f0a49ad91f6
+		sourceLineageTag: report_generated_at
+		summarizeBy: none
+		sourceColumn: report_generated_at
+
+		annotation SummarizationSetBy = Automatic
+
+	partition cost_monthly = entity
+		mode: directLake
+		source
+			entityName: cost_monthly
+			schemaName: dbo
+			expressionSource: 'DirectLake - Gold_LH'
+
