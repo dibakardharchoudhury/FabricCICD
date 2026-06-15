@@ -11,6 +11,7 @@ Sources (PIMS / Alpha / SharePoint)
               └─► Gold_LH ← DF_Gold_PA (production_daily) + NB_03_Aggregate_Gold (cost / schedule / KPI)
                     └─► Gold_SM (DirectLake semantic model) → Gold_Dashboard (report)
 
+Pipeline order: NB_Setup → NB_Seed_Bronze → NB_Transform_Silver → DF_Gold_PA → NB_Aggregate_Gold
 CI/CD:  GitHub (main) ─► GitHub Actions ─► Fabric Deployment Pipeline (ws-CICD-Dev → ws-CICD-Prod)
 ```
 
@@ -56,11 +57,11 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
 
 **6. Import & run the data pipeline `PL_Refresh_Master`** — two ways:
 - **Via Git (recommended):** the `.json` arrives when you sync in Step 10; Fabric materializes the pipeline item.
-- **Via template:** New → Data pipeline → **Home → Import from a template** → `pipelines/PL_Refresh_Master.zip`. All five activities import pre-wired.
+- **Via template:** New → Data pipeline → **Home → Import from a template** → `pipelines/PL_Refresh_Master.zip` (this is a verified Fabric export and imports + saves cleanly). The five activities import pre-wired.
 
-  After a template import, **re-bind each activity** to your items (templates ship placeholder GUIDs `00000000-…`): the three Notebook activities → `NB_01`/`NB_02`/`NB_03`; the Dataflow activity → `DF_Gold_PA`; the Semantic-model-refresh activity → `Gold_SM` (bind this only after Step 8). `workspaceId` resolves automatically via `@pipeline().DataFactory` — never set it by hand.
+  Fabric pipelines reference items by **literal GUID** (that's what Fabric exports — expression-based `notebookId`/`workspaceId` makes the importer hang). The shipped GUIDs point at the author's workspace, so after a template import into **your** workspace **re-bind each activity**: the four Notebook activities → `NB_Setup`/`NB_01`/`NB_02`/`NB_03`; the Dataflow activity → `DF_Gold_PA`. If you sync via Git into the same workspace, or promote through the Deployment Pipeline, the GUIDs are re-paired automatically (Step 11) — no manual rebind.
 
-  Run order: `NB_01 → NB_02 → DF_Gold_PA → NB_03 → Refresh Gold_SM`, each gated on the previous. Leave `Environment = dev`. One run = full end-to-end refresh.
+  Run order: `NB_Setup → NB_01 → NB_02 → DF_Gold_PA → NB_03`, each gated on the previous. One run = full end-to-end Gold build.
 
 **7. Build the Gold Dataflow `DF_Gold_PA`** (required — builds `production_daily`):
 1. **+ New item → Dataflow Gen2**, name it `DF_Gold_PA`.
@@ -90,10 +91,9 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
 
 | Item | Rule | Set |
 | --- | --- | --- |
-| `PL_Refresh_Master` | Parameter | `Environment=prod` + the five item-GUID params (`BronzeNotebookId`, `SilverNotebookId`, `GoldDataflowId`, `GoldNotebookId`, `SemanticModelId`) to the Prod items |
 | `Gold_SM` | Data source | Bind to `ws-CICD-Prod/Gold_LH` |
 
-> The pipeline needs **no WorkspaceId rule** — it resolves the workspace at runtime via `@pipeline().DataFactory`. Promote all items in the **same** deploy so Fabric auto-pairs them; the GUID rules are then a safety net. Rules are portal-only (no public REST API) and apply automatically on every deploy.
+> **No rule is needed for `PL_Refresh_Master`'s item references.** The pipeline points at notebooks/dataflow by literal GUID; when you promote **all items in the same deploy**, the Deployment Pipeline **auto-pairs** them and rewrites those GUIDs to the Prod items automatically on every deploy. The only manual rule is the `Gold_SM` data-source binding. Rules are portal-only (no public REST API) and apply automatically on every deploy.
 
 **13. Service principal & GitHub secrets** — register an Entra app (client ID, tenant ID, secret); enable *"Service principals can use Fabric APIs"*; add the SP as Admin on both workspaces and the deployment pipeline. Add GitHub secrets: `FABRIC_TENANT_ID`, `FABRIC_CLIENT_ID`, `FABRIC_CLIENT_SECRET`, `FABRIC_PIPELINE_ID`.
 
@@ -107,11 +107,11 @@ Gold is finished by **two** artifacts: `DF_Gold_PA` builds `production_daily`; `
 
 ## Efficient end-to-end CI/CD (how this repo is wired)
 
-- **Workspace is never hardcoded** — every pipeline activity uses `@pipeline().DataFactory`, so the *same* `PL_Refresh_Master` runs unchanged in Dev, Test, and Prod.
-- **Every item GUID is a pipeline parameter** (`BronzeNotebookId` … `SemanticModelId`), set per stage by Deployment Rules — no manual rebinding after promotion.
-- **One artifact, two delivery paths** — the `.json` is the Git source of truth (fully parameterized); the `.zip` is the one-click import template (rebind in UI). Same activities, same order.
-- **One-command refresh** — `PL_Refresh_Master` runs notebooks + dataflow + model refresh in dependency order, so post-deploy data load is a single click (or one REST call).
-- **Promote together** — deploy all items in one pass so Fabric auto-pairs them; rules become a safety net rather than a requirement.
+- **Native item references** — the pipeline references notebooks/dataflow by literal GUID, exactly as Fabric exports them, so the template imports and saves without hanging. (Expression-based `notebookId`/`workspaceId` is what breaks the importer.)
+- **Promotion auto-pairs items** — build everything in Dev, assign workspaces, then deploy once: the Deployment Pipeline pairs every item and rewrites the pipeline's GUID references to the Prod items automatically on every subsequent deploy. No per-stage parameter wiring for item IDs.
+- **One manual rule** — only the `Gold_SM` data-source binding is set by hand; everything else is automatic.
+- **One-command refresh** — `PL_Refresh_Master` runs `NB_Setup → NB_01 → NB_02 → DF_Gold_PA → NB_03` in dependency order, so post-deploy data load is a single click (or one REST call).
+- **One artifact, two delivery paths** — the `.json` is the Git/source reference; the `.zip` is the one-click import template. Same activities, same order, same literal-GUID shape.
 
 ## Key limitations
 

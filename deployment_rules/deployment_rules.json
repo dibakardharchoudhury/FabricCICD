@@ -2,31 +2,8 @@
   "_comment": "Deployment Rules for DeployPipeline — configure in Fabric UI: Pipeline → ⚙️ Deployment Rules on the target stage. Rules can't be imported from a file; this is the reference for what to enter.",
   "_docs": "https://learn.microsoft.com/en-us/fabric/cicd/deployment-pipelines/create-rules",
   "pipeline": "DeployPipeline",
+  "_how_item_references_are_handled": "PL_Refresh_Master references its notebooks and dataflow by LITERAL item GUID (this is how Fabric exports/stores pipelines and what imports cleanly — expression-based notebookId/workspaceId causes the importer to hang). You do NOT rewrite those GUIDs with deployment rules. Instead, promote ALL items in the SAME deploy so the Fabric Deployment Pipeline AUTO-PAIRS them; on every Dev → Prod deploy it rewrites the pipeline's item references to the paired Prod items automatically. The only rule you still configure by hand is the semantic-model data source binding below.",
   "rules": [
-    {
-      "item": "PL_Refresh_Master",
-      "type": "DataPipeline",
-      "rule": "PipelineParameter",
-      "description": "PL_Refresh_Master resolves its workspace at runtime via @pipeline().DataFactory, so no WorkspaceId rule is needed. Set only the Environment flag and the per-stage item GUIDs below. Item GUIDs come from each workspace (item -> Settings, or the item URL).",
-      "stages": {
-        "Development": {
-          "Environment": "dev",
-          "BronzeNotebookId": "<DEV_NB_01_GUID>",
-          "SilverNotebookId": "<DEV_NB_02_GUID>",
-          "GoldDataflowId": "<DEV_DF_GOLD_PA_GUID>",
-          "GoldNotebookId": "<DEV_NB_03_GUID>",
-          "SemanticModelId": "<DEV_GOLD_SM_GUID>"
-        },
-        "Production": {
-          "Environment": "prod",
-          "BronzeNotebookId": "<PROD_NB_01_GUID>",
-          "SilverNotebookId": "<PROD_NB_02_GUID>",
-          "GoldDataflowId": "<PROD_DF_GOLD_PA_GUID>",
-          "GoldNotebookId": "<PROD_NB_03_GUID>",
-          "SemanticModelId": "<PROD_GOLD_SM_GUID>"
-        }
-      }
-    },
     {
       "item": "Gold_SM",
       "type": "SemanticModel",
@@ -46,10 +23,9 @@
   ],
   "_howto": [
     "1. Open DeployPipeline in the Fabric portal",
-    "2. Click the Deployment Rules gear on the target (Production) stage",
-    "3. For PL_Refresh_Master add Parameter rules for Environment + the five item-GUID parameters",
-    "4. For Gold_SM add a Data source rule pointing at that stage's Gold_LH SQL endpoint",
-    "5. Rules are stored on the pipeline and applied automatically on every deploy (including GitHub Actions deploys)",
-    "TIP: Promote all items in the SAME deploy so Fabric auto-pairs them; paired notebooks/dataflow/model keep their bindings and the GUID rules become a safety net, not a requirement"
+    "2. Build ALL items in Dev first, then assign workspaces, then Deploy once so every item auto-pairs (notebooks, dataflow, pipeline, semantic model, report)",
+    "3. Click the Deployment Rules gear on the target (Production) stage",
+    "4. Add the Gold_SM Data source rule pointing at ws-CICD-Prod/Gold_LH",
+    "5. Rules are stored on the pipeline and applied automatically on every deploy (including GitHub Actions deploys); pipeline item references are re-paired automatically and need no rule"
   ]
 }

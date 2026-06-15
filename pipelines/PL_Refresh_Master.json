@@ -2,76 +2,62 @@
   "name": "PL_Refresh_Master",
   "objectId": "00000000-0000-0000-0000-000000000001",
   "properties": {
-    "description": "Master orchestration - runs the full Medallion end to end: NB_01_Seed_Bronze -> NB_02_Transform_Silver -> DF_Gold_PA (builds Gold production_daily) -> NB_03_Aggregate_Gold (cost/schedule/KPI) -> Refresh Gold_SM. Fully parameterized: workspace resolves at runtime via @pipeline().DataFactory (no per-stage rebinding); every item GUID is a pipeline parameter set per stage by Deployment Rules.",
+    "description": "Master orchestration - runs the full Medallion end to end inside a workspace: NB_Setup -> NB_Seed_Bronze -> NB_Transform_Silver -> DF_Gold (builds Gold production_daily) -> NB_Aggregate_GOLD (cost/schedule/KPI). Mirrors the verified Fabric export: notebooks/dataflow are referenced by LITERAL item GUID + LITERAL workspaceId (this is what Fabric exports and what imports cleanly). When promoting to another workspace, the Fabric Deployment Pipeline auto-pairs the items and rewrites these GUIDs; re-bind manually only if you import the template by hand.",
     "activities": [
+      {
+        "name": "NB_Setup",
+        "type": "TridentNotebook",
+        "dependsOn": [],
+        "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
+        "typeProperties": {
+          "notebookId": "ce35d36f-0a28-4ace-9be7-cb30a9ab5532",
+          "workspaceId": "292e18c3-b95e-42d1-bb02-9a2064fee5b8"
+        }
+      },
       {
         "name": "NB_Seed_Bronze",
         "type": "TridentNotebook",
-        "dependsOn": [],
-        "policy": { "timeout": "0.01:00:00", "retry": 1, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
+        "dependsOn": [ { "activity": "NB_Setup", "dependencyConditions": ["Succeeded"] } ],
+        "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
         "typeProperties": {
-          "notebookId": { "value": "@pipeline().parameters.BronzeNotebookId", "type": "Expression" },
-          "workspaceId": { "value": "@pipeline().DataFactory", "type": "Expression" },
-          "parameters": {
-            "environment": { "value": { "value": "@pipeline().parameters.Environment", "type": "Expression" }, "type": "string" }
-          }
+          "notebookId": "badd3f32-fe98-4f17-a06f-a6bf3bcc7a51",
+          "workspaceId": "292e18c3-b95e-42d1-bb02-9a2064fee5b8"
         }
       },
       {
         "name": "NB_Transform_Silver",
         "type": "TridentNotebook",
         "dependsOn": [ { "activity": "NB_Seed_Bronze", "dependencyConditions": ["Succeeded"] } ],
-        "policy": { "timeout": "0.01:30:00", "retry": 1, "retryIntervalInSeconds": 60, "secureOutput": false, "secureInput": false },
+        "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
         "typeProperties": {
-          "notebookId": { "value": "@pipeline().parameters.SilverNotebookId", "type": "Expression" },
-          "workspaceId": { "value": "@pipeline().DataFactory", "type": "Expression" },
-          "parameters": {
-            "environment": { "value": { "value": "@pipeline().parameters.Environment", "type": "Expression" }, "type": "string" }
-          }
+          "notebookId": "07790997-454f-4a23-a1e9-ae76b9cf4306",
+          "workspaceId": "292e18c3-b95e-42d1-bb02-9a2064fee5b8"
         }
       },
       {
-        "name": "DF_Gold_Production",
+        "name": "DF_Gold",
         "type": "RefreshDataflow",
         "dependsOn": [ { "activity": "NB_Transform_Silver", "dependencyConditions": ["Succeeded"] } ],
-        "policy": { "timeout": "0.01:00:00", "retry": 1, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
+        "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
         "typeProperties": {
-          "dataflowId": { "value": "@pipeline().parameters.GoldDataflowId", "type": "Expression" },
-          "workspaceId": { "value": "@pipeline().DataFactory", "type": "Expression" },
-          "notifyOption": "NoNotification"
+          "dataflowId": "b23c65fc-00fb-4df0-9f2e-eaf90cf6db80",
+          "workspaceId": "292e18c3-b95e-42d1-bb02-9a2064fee5b8",
+          "notifyOption": "NoNotification",
+          "dataflowType": "DataflowFabric",
+          "executeMashupQueriesOnly": true
         }
       },
       {
-        "name": "NB_Aggregate_Gold",
+        "name": "NB_Aggregate_GOLD",
         "type": "TridentNotebook",
-        "dependsOn": [ { "activity": "DF_Gold_Production", "dependencyConditions": ["Succeeded"] } ],
-        "policy": { "timeout": "0.01:00:00", "retry": 1, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
+        "dependsOn": [ { "activity": "DF_Gold", "dependencyConditions": ["Succeeded"] } ],
+        "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
         "typeProperties": {
-          "notebookId": { "value": "@pipeline().parameters.GoldNotebookId", "type": "Expression" },
-          "workspaceId": { "value": "@pipeline().DataFactory", "type": "Expression" },
-          "parameters": {
-            "environment": { "value": { "value": "@pipeline().parameters.Environment", "type": "Expression" }, "type": "string" }
-          }
-        }
-      },
-      {
-        "name": "Refresh_Semantic_Model",
-        "type": "TridentDatasetRefresh",
-        "dependsOn": [ { "activity": "NB_Aggregate_Gold", "dependencyConditions": ["Succeeded"] } ],
-        "policy": { "timeout": "0.00:30:00", "retry": 2, "retryIntervalInSeconds": 60, "secureOutput": false, "secureInput": false },
-        "typeProperties": {
-          "datasetId": { "value": "@pipeline().parameters.SemanticModelId", "type": "Expression" }
+          "notebookId": "bbd61d3a-98b6-489c-b2c9-573a5fa2d3f9",
+          "workspaceId": "292e18c3-b95e-42d1-bb02-9a2064fee5b8"
         }
       }
     ],
-    "parameters": {
-      "Environment":      { "type": "string", "defaultValue": "dev" },
-      "BronzeNotebookId": { "type": "string", "defaultValue": "00000000-0000-0000-0000-000000000000" },
-      "SilverNotebookId": { "type": "string", "defaultValue": "00000000-0000-0000-0000-000000000000" },
-      "GoldDataflowId":   { "type": "string", "defaultValue": "00000000-0000-0000-0000-000000000000" },
-      "GoldNotebookId":   { "type": "string", "defaultValue": "00000000-0000-0000-0000-000000000000" },
-      "SemanticModelId":  { "type": "string", "defaultValue": "00000000-0000-0000-0000-000000000000" }
-    },
-    "annotations": [ "MedallionLayer=All", "CICDDemo=true", "Version=2.0" ]
+    "annotations": [ "MedallionLayer=All", "CICDDemo=true", "Version=3.0" ]
   }
 }
