@@ -258,20 +258,37 @@ with notebooks in Step 5. They're here to demonstrate the low-code ingestion opt
 ### Step 8 — Create the semantic model (`Gold_SM`)
 `semantic_model/Gold_SM.bim` is a TMSL model over the Gold layer using **DirectLake**.
 It defines **4 tables** — `production_daily`, `cost_monthly`, `schedule_summary`, and a
-`DateDim` date table — related on `date`, with measures including `Total BOE`,
-`Total Oil (Bbl)`, `Total Gas (Mcf)`, `Avg Water Cut %`, `Active Wells`,
-`Total Cost (USD)`, `Avg Cost per BOE`, and `Total Activities`.
+`DateDim` date table — related on `date`, with **two headline measures**:
+`Total BOE` (`SUM(production_daily[total_boe])`) and
+`Total Cost (USD)` (`SUM(cost_monthly[total_cost_usd])`).
+
+> **Where does `DateDim` come from?** It is **not** a Gold lakehouse table — there is no
+> `Gold_LH.DateDim`. It's a **calculated table defined inside the semantic model** via a
+> DAX `CALENDAR(DATE(2024,1,1), DATE(2024,12,31))` expression (see the `DateDim-calculated`
+> partition in `Gold_SM.bim`), with calculated columns (`Year`, `Month`, `MonthName`,
+> `Quarter`, `WeekNumber`). The model generates it at refresh time, so when you create the
+> model from the `.bim` it comes along automatically. If you instead build the model by
+> clicking **New semantic model** on `Gold_LH`, the lakehouse picker will **not** list a
+> `DateDim` (it doesn't exist there) — add it afterward in the model as a calculated table
+> with `DateDim = CALENDAR(DATE(2024,1,1), DATE(2024,12,31))`, then add the calculated
+> columns. (Note: calculated tables/columns run in import/analysis mode alongside the
+> DirectLake fact tables — a composite model — which is expected for this demo date table.)
 
 Create it one of three ways:
 
 - **From Fabric (fastest, click-through):**
   1. Open **`Gold_LH`** → top ribbon **New semantic model**.
   2. Name it **`Gold_SM`** and tick the Gold tables (`production_daily`, `cost_monthly`,
-     `schedule_summary`, `DateDim`). Click **Confirm** — this creates a DirectLake model.
-  3. Open the model → **Model view** → drag `DateDim[Date]` to each fact table's `date`
-     column to create the relationships (single-direction, one-to-many from `DateDim`).
-  4. Add the measures: select a table → **New measure** → paste each DAX expression from
-     `Gold_SM.bim` (e.g. `Total BOE = SUM(production_daily[total_boe])`).
+     `schedule_summary`). Click **Confirm** — this creates a DirectLake model.
+     (`DateDim` is **not** in this list — you add it in the next step.)
+  3. Add the date table: **New calculated table** →
+     `DateDim = CALENDAR(DATE(2024,1,1), DATE(2024,12,31))`, then add calculated columns
+     (`Year`, `Month`, `MonthName`, `Quarter`, `WeekNumber`) per `Gold_SM.bim`.
+  4. **Model view** → drag `DateDim[Date]` onto `production_daily[date]` to create the
+     relationship (single-direction, one-to-many from `DateDim`).
+  5. Add the two measures: select `production_daily` → **New measure** →
+     `Total BOE = SUM(production_daily[total_boe])`; select `cost_monthly` →
+     **New measure** → `Total Cost (USD) = SUM(cost_monthly[total_cost_usd])`.
 
 - **From the `.bim` (full fidelity, recommended for the demo):**
   1. Open **`Gold_SM.bim`** in **Tabular Editor 2/3** (or modern **Power BI Desktop**).
@@ -297,12 +314,13 @@ With `Gold_SM` published, build the report on top of it:
    - In the workspace: **New → Report → pick a published semantic model → `Gold_SM`**, or
    - In **Power BI Desktop**: **Get data → Power BI semantic models → `Gold_SM`** in
      **Live connect** mode — never *Import*, so the report stays DirectLake.
-2. **Add visuals over the measures**, for example:
-   - **Card** — `Total BOE` and `Active Wells` (production health at a glance).
-   - **Line chart** — `Avg Water Cut %` by `DateDim[Date]` (trend).
-   - **Clustered column** — `Total Oil (Bbl)` and `Total Gas (Mcf)` by `field`.
-   - **Combo chart** — `Total Cost (USD)` vs `Total BOE` by month (cost efficiency).
-   - **KPI / table** — `Avg Cost per BOE` and `Total Activities`.
+2. **Add visuals over the two measures**, for example:
+   - **Card** — `Total BOE` (production at a glance).
+   - **Card** — `Total Cost (USD)` (spend at a glance).
+   - **Line chart** — `Total BOE` by `DateDim[Date]` (production trend).
+   - **Clustered column** — `Total BOE` and `Total Cost (USD)` by `field` (compare fields).
+   - **Combo chart** — `Total Cost (USD)` (columns) vs `Total BOE` (line) by
+     `DateDim[MonthName]` (cost efficiency over time).
 3. **Save / publish** it to the workspace as **`Gold_Dashboard`**.
 
 > Keep the report in **Live connect / DirectLake** (no imported tables) so it promotes
