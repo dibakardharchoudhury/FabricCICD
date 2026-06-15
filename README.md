@@ -34,7 +34,7 @@ fabric-cicd-demo/
 │   └── schedule_data.csv       — Simulates SharePoint (maintenance schedule)
 │
 ├── notebooks/
-│   ├── NB_00_Setup_Environment.py  — Verify lakehouses, check Spark config
+│   ├── NB_00_Setup_Environment.py  — Verify the three lakehouses exist in the workspace
 │   ├── NB_01_Seed_Bronze.py        — Create Bronze Delta tables from sample data
 │   ├── NB_02_Transform_Silver.py   — Clean & enrich → Silver layer
 │   └── NB_03_Aggregate_Gold.py     — Aggregate → Gold layer + KPI facts table
@@ -67,45 +67,70 @@ fabric-cicd-demo/
 
 ## Quick Start
 
+> The fastest path to a working demo is to run the **data pipeline first** (Steps 1–5)
+> to prove the Medallion build, then layer on **Git + Deployment Pipelines** (Steps 6–11)
+> to demonstrate CI/CD. You can stop after Step 5 for a pure data demo.
+
 ### Step 1 — Prerequisites
-- Fabric capacity (F2+) provisioned
-- GitHub repository: `fabric-pab-cicd` with `develop` and `main` branches
-- Fabric admin switches: Git integration and GitHub integration enabled
+- Fabric capacity (F2+) provisioned and assigned to your workspace
+- A Fabric workspace (this demo uses **`ws-CICD-DevTest`** — substitute your own name)
+- For the CI/CD half: a GitHub repo with `develop` and `main` branches, and the
+  Fabric admin switches **Git integration** and **GitHub integration** enabled
 
-### Step 2 — Workspace Setup (script or UI)
-```bash
-pip install requests
-# Edit TENANT_ID, CLIENT_ID, CLIENT_SECRET, CAPACITY_ID in the script
-python scripts/01_setup_fabric_workspaces.py
-```
-Creates: PAB-Dev, PAB-Test, PAB-Prod with Bronze_LH, Silver_LH, Gold_LH in each.
+### Step 2 — Create the three lakehouses
+In your workspace (`ws-CICD-DevTest`), create three lakehouses with these **exact** names:
+- `Bronze_LH`
+- `Silver_LH`
+- `Gold_LH`
 
-### Step 3 — Upload Notebooks to PAB-Dev
-In Fabric UI: PAB-Dev → + New Item → Import Notebook → upload each .py file from /notebooks/
+> The notebooks write tables with two-part names (e.g. `Bronze_LH.production_raw`),
+> so the lakehouse names must match exactly.
+>
+> *(Optional, multi-workspace path)* To provision `PAB-Dev / PAB-Test / PAB-Prod`
+> automatically via REST API instead, edit `TENANT_ID`, `CLIENT_ID`, `CLIENT_SECRET`,
+> `CAPACITY_ID` and run `pip install requests` then
+> `python scripts/01_setup_fabric_workspaces.py`.
 
-### Step 4 — Run Notebooks in Order
-1. NB_00_Setup_Environment  — verify connectivity
-2. NB_01_Seed_Bronze        — create Delta tables with sample data
-3. NB_02_Transform_Silver   — Bronze → Silver
-4. NB_03_Aggregate_Gold     — Silver → Gold
+### Step 3 — Import the notebooks
+In the Fabric UI: workspace → **+ New item → Import notebook** → upload each `.py`
+file from `/notebooks/`.
 
-### Step 5 — Connect Git Integration
+### Step 4 — Attach all three lakehouses to every notebook ⚠️
+Open each notebook (`NB_01`, `NB_02`, `NB_03`) and in the **Explorer / Lakehouses**
+pane add **all three** lakehouses (`Bronze_LH`, `Silver_LH`, `Gold_LH`), then set
+**one as the default**. Without this, `saveAsTable("Silver_LH.…")` and cross-lakehouse
+reads will fail with `[SCHEMA_NOT_FOUND]`.
+
+`NB_00_Setup_Environment` does not need a lakehouse attached — it only verifies the
+lakehouses exist in the workspace it is running in. Open it and confirm
+`WORKSPACE_NAME` matches your workspace before running.
+
+### Step 5 — Run the notebooks in order
+1. `NB_00_Setup_Environment` — confirms `Bronze_LH`, `Silver_LH`, `Gold_LH` exist
+2. `NB_01_Seed_Bronze`        — writes Bronze Delta tables from inline sample data
+3. `NB_02_Transform_Silver`   — Bronze → Silver (clean, conform, KPIs)
+4. `NB_03_Aggregate_Gold`     — Silver → Gold (aggregates + KPI fact table)
+
+After Step 5 you have a fully built Medallion lakehouse. Stop here for a data-only
+demo, or continue to wire up CI/CD.
+
+### Step 6 — Connect Git Integration
 ```bash
 # Edit GitHub PAT and repo URL in the script
 python scripts/02_connect_git_integration.py
 ```
-Or manually: PAB-Dev → Workspace Settings → Git Integration → GitHub
+Or manually: workspace → **Workspace settings → Git integration → GitHub**
 
-### Step 6 — Commit to GitHub
-In PAB-Dev: Source Control icon → Select all items → Add commit message → Commit
+### Step 7 — Commit to GitHub
+In the workspace: **Source control** icon → select all items → add a commit message → **Commit**
 
-### Step 7 — Create Deployment Pipeline
+### Step 8 — Create Deployment Pipeline
 ```bash
 python scripts/03_create_deployment_pipeline.py
 ```
-Note the pipeline ID — add to GitHub secrets as `FABRIC_PIPELINE_ID`
+Note the pipeline ID — add it to GitHub secrets as `FABRIC_PIPELINE_ID`
 
-### Step 8 — Configure GitHub Actions
+### Step 9 — Configure GitHub Actions
 Add these secrets to your GitHub repository:
 - `FABRIC_TENANT_ID`
 - `FABRIC_CLIENT_ID`
@@ -114,8 +139,13 @@ Add these secrets to your GitHub repository:
 
 Copy `github_actions/*.yml` to `.github/workflows/` in your repo.
 
-### Step 9 — Demo the CI/CD Loop
-1. Open `NB_02_Transform_Silver` in PAB-Dev
+### Step 10 — Refresh data after deployment
+Lakehouse deployments copy **structure only, not data**. After the pipeline deploys
+to Test/Prod, run `NB_01` → `NB_02` → `NB_03` (or `PL_Refresh_Master`) in the target
+workspace to populate tables.
+
+### Step 11 — Demo the CI/CD Loop
+1. Open `NB_02_Transform_Silver` in your dev workspace
 2. Uncomment the `gor_ratio` line (Gas-to-Oil Ratio KPI)
 3. Run the notebook — verify the new column appears
 4. Source Control → Commit: `feat: add gas-to-oil ratio KPI`
