@@ -16,6 +16,8 @@
 
 # CELL ********************
 
+
+
 # Fabric Notebook: NB_05_Deploy
 # Purpose: ONE notebook that DEPLOYS the repo into the current stage's workspace using
 #   fabric-cicd, replacing BOTH the slow Fabric Deployment Pipeline AND the post-deploy
@@ -158,7 +160,7 @@ remove_orphans = False
 #   this line (faster cold start, version-pinned): https://learn.microsoft.com/fabric/data-engineering/environment-manage-library
 # semantic-link-labs is added for the merged Direct Lake rebind (Cell 6b); drop it if you set
 # rebind_direct_lake = False and a Fabric Environment already provides fabric-cicd.
-%pip install -q fabric-cicd semantic-link-labs
+#%pip install -q fabric-cicd semantic-link-labs
 
 # Cell 3 — Imports, token credential, and a small HTML status helper.
 import json, base64, time, subprocess, tempfile, os, shutil
@@ -497,6 +499,8 @@ display(HTML(
     'tenant-level and are NOT auto-mapped — set them once per stage.</div>'
     '</div>'
 ))
+
+
 
 # METADATA ********************
 
