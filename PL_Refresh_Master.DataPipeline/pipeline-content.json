@@ -88,36 +88,6 @@
             ]
           }
         ]
-      },
-      {
-        "type": "PBISemanticModelRefresh",
-        "typeProperties": {
-          "method": "POST",
-          "groupId": "292e18c3-b95e-42d1-bb02-9a2064fee5b8",
-          "datasetId": "44ab3338-afb5-4da6-9b5d-14d76d997102",
-          "commitMode": "Transactional",
-          "waitOnCompletion": true,
-          "operationType": "SemanticModelRefresh"
-        },
-        "externalReferences": {
-          "connection": "89fe8091-dbdd-4550-b362-6741869791c9"
-        },
-        "policy": {
-          "timeout": "0.12:00:00",
-          "retry": 0,
-          "retryIntervalInSeconds": 30,
-          "secureInput": false,
-          "secureOutput": false
-        },
-        "name": "SM_Gold_Refresh",
-        "dependsOn": [
-          {
-            "activity": "NB_Aggregate_GOLD",
-            "dependencyConditions": [
-              "Succeeded"
-            ]
-          }
-        ]
       }
     ]
   }
