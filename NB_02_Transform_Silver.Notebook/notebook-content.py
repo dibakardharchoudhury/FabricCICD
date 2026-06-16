@@ -77,7 +77,7 @@ df_silver_prod.write \
 
 count_prod = df_silver_prod.count()
 print(f"✅ Silver_LH.production_conformed: {count_prod} rows")
-display(df_silver_prod.limit(5))
+#display(df_silver_prod.limit(5))
 
 # Cell 3 — Cost: enrich with daily BOE for cost-per-BOE KPI
 df_cost_raw = spark.table("Bronze_LH.dbo.cost_raw")
