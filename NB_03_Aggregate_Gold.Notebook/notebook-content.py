@@ -149,7 +149,6 @@ df_kpi_facts.write \
     .saveAsTable("Gold_LH.dbo.field_kpi_facts")
 
 print(f"✅ Gold_LH.field_kpi_facts: {df_kpi_facts.count()} rows")
-display(df_kpi_facts)
 
 # METADATA ********************
 
@@ -196,11 +195,13 @@ _sync = labs.refresh_sql_endpoint_metadata(
 print(_sync)
 
 # Defensive check: if the status DataFrame exposes a table-name column, confirm every expected Gold
-# table is present in the synced metadata before allowing the downstream refresh to proceed.
+# table is present in the synced metadata before allowing the downstream refresh to proceed. The
+# "Table Name" column is schema-qualified (e.g. "dbo.production_daily"), so strip the schema prefix
+# before comparing against the bare names in _EXPECTED_TABLES.
 _synced = set()
 for _col in ("Table Name", "TableName", "table_name", "Name"):
     if hasattr(_sync, "columns") and _col in _sync.columns:
-        _synced = set(_sync[_col].astype(str))
+        _synced = {str(_v).split(".")[-1] for _v in _sync[_col]}
         break
 _missing = (set(_EXPECTED_TABLES) - _synced) if _synced else set()
 if _missing:
