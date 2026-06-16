@@ -508,3 +508,113 @@ display(HTML(
 # META   "language": "python",
 # META   "language_group": "synapse_pyspark"
 # META }
+
+# CELL ********************
+
+# Cell 8 — DANGER: DELETE EVERY ITEM in the target (PROD) workspace.
+# -----------------------------------------------------------------------------------
+# Standalone teardown helper — NOT part of the deploy flow above. Run it ON ITS OWN when
+# you want a clean slate in the target workspace (e.g. to re-test a from-empty deploy).
+# It deletes ALL items (reports, semantic models, pipelines, dataflows, notebooks,
+# lakehouses, environments, ...) in `target_workspace_name`; the workspace itself stays.
+#
+# This is IRREVERSIBLE — lakehouse tables/data go with the lakehouse. To prevent an
+# accidental wipe on "Run all", it is GUARDED: nothing is deleted until you set
+# confirm_delete_workspace to EXACTLY the target workspace name. Left as "" it only reports.
+#
+# SELF-CONTAINED: this cell is meant to be run ON ITS OWN, so it does NOT assume Cells 1–4
+# ran in this session. The bootstrap below defines everything it needs (_FABRIC_BASE,
+# _fabric_get, _say, target_workspace_name, target_workspace_id) only if they are missing —
+# which is why running just this cell no longer raises NameError: '_fabric_get' is not defined.
+confirm_delete_workspace = ""        # set to target_workspace_name (e.g. "ws-CICD-PROD") to actually delete
+
+# Which workspace to wipe. Re-declared here so the cell stands alone; edit if you ran nothing else.
+target_workspace_name = globals().get("target_workspace_name", "ws-CICD-PROD")
+
+import requests, notebookutils
+from IPython.display import display, HTML
+
+_FABRIC_BASE = globals().get("_FABRIC_BASE", "https://api.fabric.microsoft.com/v1")
+
+# Define _say only if Cell 3 did not (plain-text fallback that still renders an HTML banner).
+if "_say" not in globals():
+    def _say(msg, kind="ok"):
+        _color = {"ok": "#1a7f37", "info": "#0969da", "warn": "#9a6700", "err": "#cf222e"}.get(kind, "#1a7f37")
+        _icon  = {"ok": "✓", "info": "ℹ", "warn": "⚠", "err": "✗"}.get(kind, "✓")
+        display(HTML(
+            f'<div style="font-family:Segoe UI,system-ui,sans-serif;font-size:13px;'
+            f'padding:5px 12px;margin:3px 0;border-left:3px solid {_color};'
+            f'background:{_color}14;color:#24292f;border-radius:4px">'
+            f'<span style="color:{_color};font-weight:700">{_icon}</span>&nbsp; {msg}</div>'
+        ))
+
+# Define _fabric_get only if Cell 4 did not.
+if "_fabric_get" not in globals():
+    def _fabric_get(path):
+        token = notebookutils.credentials.getToken("https://api.fabric.microsoft.com")
+        r = requests.get(f"{_FABRIC_BASE}{path}", headers={"Authorization": f"Bearer {token}"})
+        r.raise_for_status()
+        return r.json()
+
+def _fabric_delete(path):
+    token = notebookutils.credentials.getToken("https://api.fabric.microsoft.com")
+    r = requests.delete(f"{_FABRIC_BASE}{path}", headers={"Authorization": f"Bearer {token}"})
+    r.raise_for_status()
+    return r
+
+# Resolve target_workspace_id by name if Cell 4 did not already (standalone run).
+target_workspace_id = globals().get("target_workspace_id")
+if not target_workspace_id:
+    _wss = _fabric_get("/workspaces")["value"]
+    target_workspace_id = next((w["id"] for w in _wss if w["displayName"] == target_workspace_name), None)
+    if not target_workspace_id:
+        _avail = ", ".join(sorted(w["displayName"] for w in _wss)) or "(none visible)"
+        raise ValueError(f"Workspace '{target_workspace_name}' not visible to this identity. Visible: {_avail}")
+
+# List every item currently in the target workspace.
+_all_items = _fabric_get(f"/workspaces/{target_workspace_id}/items")["value"]
+
+if not _all_items:
+    _say(f"Target workspace <b>{target_workspace_name}</b> already has no items — nothing to delete.", "info")
+elif confirm_delete_workspace != target_workspace_name:
+    _say(f"<b>{len(_all_items)}</b> item(s) in <b>{target_workspace_name}</b> would be deleted. "
+         f"This is a DRY RUN — set <code>confirm_delete_workspace = \"{target_workspace_name}\"</code> "
+         f"and re-run THIS cell to actually delete them.", "warn")
+    for _it in _all_items:
+        _say(f"&nbsp;&nbsp;• {_it['displayName']} <code>({_it['type']})</code>", "info")
+else:
+    # Delete dependents before their sources so dependency locks don't block a delete.
+    # Anything not in this list (e.g. Lakehouse) is deleted last. A couple of retry passes
+    # mop up items whose first delete failed because a dependent had not gone yet.
+    _order = ["Report", "DataPipeline", "Dataflow", "Notebook", "SemanticModel",
+              "Environment", "Eventstream", "KQLDashboard", "KQLQueryset", "KQLDatabase",
+              "Eventhouse", "Warehouse", "SQLDatabase", "MirroredDatabase", "Lakehouse"]
+    _rank = {t: i for i, t in enumerate(_order)}
+    _pending = sorted(_all_items, key=lambda it: _rank.get(it["type"], len(_order)))
+    _deleted, _failed = [], []
+    for _pass in range(3):
+        if not _pending:
+            break
+        _still = []
+        for _it in _pending:
+            try:
+                _fabric_delete(f"/workspaces/{target_workspace_id}/items/{_it['id']}")
+                _deleted.append(_it)
+            except Exception as _e:
+                _it["_err"] = str(_e)
+                _still.append(_it)
+        _pending = _still
+    _failed = _pending
+
+    _say(f"Deleted <b>{len(_deleted)}</b> item(s) from <b>{target_workspace_name}</b>.",
+         "ok" if not _failed else "warn")
+    for _it in _failed:
+        _say(f"Could NOT delete <b>{_it['displayName']}</b> <code>({_it['type']})</code>: "
+             f"{_it.get('_err', 'unknown error')}", "err")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }

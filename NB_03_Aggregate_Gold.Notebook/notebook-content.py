@@ -31,6 +31,14 @@
 # Fabric Notebook: NB_03_Aggregate_Gold
 # Purpose: Aggregate Silver → Gold layer (report-ready, pre-computed KPIs)
 # Layer: Gold — report-oriented, aggregated, enriched
+#
+# OWNERSHIP SPLIT (important):
+#   • Gold_LH.production_daily  → produced by the DATAFLOW DF_Gold_PA (NOT this notebook).
+#   • Gold_LH.cost_monthly      → produced here (Cell 3).
+#   • Gold_LH.schedule_summary  → produced here (Cell 4).
+#   • Gold_LH.field_kpi_facts   → produced here (Cell 5, joins production_daily + cost_monthly).
+# This notebook never recreates production_daily; it only reads it for the cross-domain KPI join.
+# Cell 6 then forces the lakehouse catalog/metadata sync so Gold_SM can resolve the new tables.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Cell 1 — Imports
@@ -42,35 +50,17 @@ from pyspark.sql.functions import (
 spark = SparkSession.builder.getOrCreate()
 print("Starting Gold aggregation...")
 
-# Cell 2 — Gold Production: daily field-level summary
-df_silver_prod = spark.table("Silver_LH.dbo.production_conformed")
-
-df_gold_prod = (
-    df_silver_prod
-    .groupBy("date", "field")
-    .agg(
-        _sum("oil_bbl").alias("total_oil_bbl"),
-        _sum("gas_mcf").alias("total_gas_mcf"),
-        _sum("water_bbl").alias("total_water_bbl"),
-        _sum("boe_total").alias("total_boe"),
-        avg("water_cut_pct").alias("avg_water_cut_pct"),
-        count("well_id").alias("active_well_count"),
+# Cell 2 — Gold Production: OWNED BY THE DATAFLOW (DF_Gold_PA) — do NOT recreate here.
+# DF_Gold_PA aggregates Silver_LH.production_conformed → Gold_LH.production_daily (Replace mode).
+# Recreating it in this notebook would double-own the table and race the dataflow. Instead we just
+# confirm it is present — DF_Gold_PA runs BEFORE NB_03 in PL_Refresh_Master — and read it later in
+# Cell 5 for the cross-domain KPI join. (Cell 6 separately forces the catalog/metadata sync.)
+if not spark.catalog.tableExists("Gold_LH.dbo.production_daily"):
+    raise Exception(
+        "Gold_LH.dbo.production_daily is missing. It is produced by the DF_Gold_PA dataflow, which "
+        "must run BEFORE this notebook in PL_Refresh_Master. Check the pipeline ordering / dataflow run."
     )
-    .withColumn("total_oil_bbl",        _round("total_oil_bbl", 2))
-    .withColumn("total_gas_mcf",        _round("total_gas_mcf", 2))
-    .withColumn("total_boe",            _round("total_boe", 2))
-    .withColumn("avg_water_cut_pct",    _round("avg_water_cut_pct", 2))
-    .withColumn("report_generated_at",  current_timestamp())
-)
-
-df_gold_prod.write \
-    .format("delta") \
-    .mode("overwrite") \
-    .option("overwriteSchema", "true") \
-    .saveAsTable("Gold_LH.dbo.production_daily")
-
-print(f"✅ Gold_LH.production_daily: {df_gold_prod.count()} rows")
-display(df_gold_prod.orderBy("date", "field"))
+print("✅ Gold_LH.production_daily present (produced by DF_Gold_PA) — not recreated by this notebook.")
 
 # Cell 3 — Gold Cost: monthly field + cost type summary
 df_silver_cost = spark.table("Silver_LH.dbo.cost_conformed")
@@ -161,13 +151,71 @@ df_kpi_facts.write \
 print(f"✅ Gold_LH.field_kpi_facts: {df_kpi_facts.count()} rows")
 display(df_kpi_facts)
 
-# Cell 6 — Final validation
-print("\n── Gold Layer Validation ────────────────────────────")
-for tbl in ["production_daily", "cost_monthly", "schedule_summary", "field_kpi_facts"]:
-    n = spark.table(f"Gold_LH.dbo.{tbl}").count()
-    print(f"  Gold_LH.{tbl}: {n} rows")
+# METADATA ********************
 
-print("\n🏆 Gold aggregation COMPLETE — tables ready for Semantic Model")
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+# Cell 6 — Gold validation + force the lakehouse catalog/metadata sync before the model refresh.
+# ---------------------------------------------------------------------------------------------
+# WHY THIS EXISTS: the Gold Delta tables are written to OneLake SYNCHRONOUSLY — they are readable in
+#   Spark, visible in the lakehouse, and queryable immediately. What lags is the LAKEHOUSE CATALOG /
+#   SQL-ENDPOINT METADATA SYNC: for a few minutes after a table is (re)created, that metadata has not
+#   caught up, so the Gold_SM refresh cannot resolve the newly created tables and fails with
+#   0xC14700DF "source tables ... do not exist or access denied" — even though the data is physically
+#   there. A filesystem check (notebookutils.fs.ls) is the WRONG tool for this: the files exist
+#   instantly, so it would always pass and never actually guard the refresh.
+#
+# WHAT IT DOES: forces that metadata sync and WAITS for it to complete via
+#   sempy_labs.refresh_sql_endpoint_metadata — the wrapper for the Fabric "Refresh SQL Endpoint
+#   Metadata" API. It blocks until the lakehouse catalog has reconciled the new tables (up to the
+#   timeout) and returns a status DataFrame. Only after that sync succeeds do we report row counts and
+#   let PL_Refresh_Master proceed to the Gold_SM refresh. Workspace + Gold_LH ids are resolved AT
+#   RUNTIME, so it is correct in Dev and in every deployed stage (fabric-cicd rebinds per workspace).
+import sempy_labs as labs
+import notebookutils
+
+_EXPECTED_TABLES = ["production_daily", "cost_monthly", "schedule_summary", "field_kpi_facts"]
+
+# Resolve the workspace + default (Gold_LH) lakehouse this notebook is attached to — at runtime.
+_ws_id = notebookutils.runtime.context.get("currentWorkspaceId") or spark.conf.get("trident.workspace.id")
+_lh_id = notebookutils.runtime.context.get("defaultLakehouseId") or spark.conf.get("trident.lakehouse.id")
+if not _ws_id or not _lh_id:
+    raise Exception("Could not resolve the current workspace/Gold_LH ids — cannot sync lakehouse metadata.")
+
+# Force the lakehouse SQL-endpoint / catalog metadata to sync and BLOCK until it completes (or 5 min).
+print("\n── Forcing lakehouse catalog/metadata sync so Gold_SM can see the new tables ──")
+_sync = labs.refresh_sql_endpoint_metadata(
+    item=_lh_id, type="Lakehouse", workspace=_ws_id,
+    timeout_unit="Minutes", timeout_value=5,
+)
+print(_sync)
+
+# Defensive check: if the status DataFrame exposes a table-name column, confirm every expected Gold
+# table is present in the synced metadata before allowing the downstream refresh to proceed.
+_synced = set()
+for _col in ("Table Name", "TableName", "table_name", "Name"):
+    if hasattr(_sync, "columns") and _col in _sync.columns:
+        _synced = set(_sync[_col].astype(str))
+        break
+_missing = (set(_EXPECTED_TABLES) - _synced) if _synced else set()
+if _missing:
+    raise Exception(
+        f"Gold tables still not present in the synced lakehouse metadata after 5 min: {sorted(_missing)}. "
+        f"A Direct-Lake refresh would fail with 0xC14700DF. Investigate the lakehouse metadata sync."
+    )
+
+# Metadata is synced — now report final row counts for the run log.
+print("\n── Gold Layer Validation ────────────────────────────")
+for _tbl in _EXPECTED_TABLES:
+    print(f"  Gold_LH.{_tbl}: {spark.table(f'Gold_LH.dbo.{_tbl}').count()} rows")
+
+print(f"\n✅ Lakehouse metadata synced for {sorted(_EXPECTED_TABLES)} — safe to refresh Gold_SM.")
+print("🏆 Gold aggregation COMPLETE — tables ready for Semantic Model")
 
 # METADATA ********************
 
