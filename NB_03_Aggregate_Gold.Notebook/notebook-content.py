@@ -42,7 +42,7 @@
 #   • Gold_LH.schedule_summary  → produced here (Cell 4).
 #   • Gold_LH.field_kpi_facts   → produced here (Cell 5, joins production_daily + cost_monthly).
 # This notebook never recreates production_daily; it only reads it for the cross-domain KPI join.
-# Cell 6 then forces the lakehouse catalog/metadata sync so Gold_SM can resolve the new tables.
+# Cell 6 then reframes the Direct Lake (on OneLake) model Gold_SM so it picks up the new data.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Cell 1 — Imports
@@ -53,6 +53,23 @@ from pyspark.sql.functions import (
 )
 spark = SparkSession.builder.getOrCreate()
 print("Starting Gold aggregation...")
+
+# Helper — write a Gold Delta table WITHOUT dropping/recreating it on every run.
+# WHY: Gold_SM is Direct Lake (on OneLake). For ~10 min after a table is DROPPED-AND-RECREATED, its
+# refresh fails with 0xC14700DF because OneLake / the lakehouse catalog must rediscover the new table
+# OBJECT (new identity). Using overwriteSchema=true on every run forces exactly that recreate — that is
+# the lag seen in the refresh history. Instead: if the table already exists, overwrite the DATA ONLY
+# (table identity preserved → no rediscovery → the model reframes immediately). Only use overwriteSchema
+# on first creation or genuine schema drift (AnalysisException fallback).
+def _write_gold(df, table):
+    full = f"Gold_LH.dbo.{table}"
+    if spark.catalog.tableExists(full):
+        try:
+            df.write.format("delta").mode("overwrite").saveAsTable(full)   # data-only, identity kept
+            return
+        except Exception:
+            pass  # schema changed since last run → fall through and recreate with the new schema
+    df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(full)
 
 # Cell 2 — Gold Production: OWNED BY THE DATAFLOW (DF_Gold_PA) — do NOT recreate here.
 # DF_Gold_PA aggregates Silver_LH.production_conformed → Gold_LH.production_daily (Replace mode).
@@ -84,11 +101,7 @@ df_gold_cost = (
     .withColumn("report_generated_at",  current_timestamp())
 )
 
-df_gold_cost.write \
-    .format("delta") \
-    .mode("overwrite") \
-    .option("overwriteSchema", "true") \
-    .saveAsTable("Gold_LH.dbo.cost_monthly")
+_write_gold(df_gold_cost, "cost_monthly")
 
 print(f"✅ Gold_LH.cost_monthly: {df_gold_cost.count()} rows")
 
@@ -108,11 +121,7 @@ df_gold_sched = (
     .withColumn("report_generated_at",  current_timestamp())
 )
 
-df_gold_sched.write \
-    .format("delta") \
-    .mode("overwrite") \
-    .option("overwriteSchema", "true") \
-    .saveAsTable("Gold_LH.dbo.schedule_summary")
+_write_gold(df_gold_sched, "schedule_summary")
 
 print(f"✅ Gold_LH.schedule_summary: {df_gold_sched.count()} rows")
 
@@ -180,11 +189,7 @@ df_kpi_facts = (
     .withColumn("report_generated_at", current_timestamp())
 )
 
-df_kpi_facts.write \
-    .format("delta") \
-    .mode("overwrite") \
-    .option("overwriteSchema", "true") \
-    .saveAsTable("Gold_LH.dbo.field_kpi_facts")
+_write_gold(df_kpi_facts, "field_kpi_facts")
 
 print(f"✅ Gold_LH.field_kpi_facts: {df_kpi_facts.count()} rows")
 
@@ -198,118 +203,65 @@ print(f"✅ Gold_LH.field_kpi_facts: {df_kpi_facts.count()} rows")
 
 # CELL ********************
 
-# Cell 6 — Gold validation + force the lakehouse catalog/metadata sync before the model refresh.
+# Cell 6 — Gold validation + reframe the Direct Lake (on OneLake) model after the write.
 # ---------------------------------------------------------------------------------------------
-# WHY THIS EXISTS: the Gold Delta tables are written to OneLake SYNCHRONOUSLY — they are readable in
-#   Spark, visible in the lakehouse, and queryable immediately. What lags is the LAKEHOUSE CATALOG /
-#   SQL-ENDPOINT METADATA SYNC: for a few minutes after a table is (re)created, that metadata has not
-#   caught up, so the Gold_SM refresh cannot resolve the newly created tables and fails with
-#   0xC14700DF "source tables ... do not exist or access denied" — even though the data is physically
-#   there. A filesystem check (notebookutils.fs.ls) is the WRONG tool for this: the files exist
-#   instantly, so it would always pass and never actually guard the refresh.
+# WHY THIS EXISTS: Gold_SM is DIRECT LAKE *ON ONELAKE* (its data source is AzureStorage.DataLake
+#   against the Gold_LH OneLake path), so at refresh time it FRAMES the Delta tables DIRECTLY from
+#   OneLake — it does NOT resolve them through the SQL analytics endpoint. (Per MS docs, Direct Lake
+#   on OneLake "doesn't fall back to DirectQuery via the SQL analytics endpoint"; the SQL endpoint is
+#   only in the discovery/permission path for Direct Lake *on SQL*.) So a SQL-endpoint metadata sync
+#   is a no-op for THIS model's refresh and has been removed — it only ever helped T-SQL/SQL-endpoint
+#   consumers and the authoring table picker, neither of which this refresh uses.
 #
-# WHAT IT DOES: forces that metadata sync and WAITS for it to complete via
-#   sempy_labs.refresh_sql_endpoint_metadata — the wrapper for the Fabric "Refresh SQL Endpoint
-#   Metadata" API. It blocks until the lakehouse catalog has reconciled the new tables (up to the
-#   timeout) and returns a status DataFrame. Only after that sync succeeds do we report row counts and
-#   let PL_Refresh_Master proceed to the Gold_SM refresh. Workspace + Gold_LH ids are resolved AT
-#   RUNTIME, so it is correct in Dev and in every deployed stage (fabric-cicd rebinds per workspace).
+# WHAT ACTUALLY GUARANTEES A CLEAN REFRESH: two things, both already in place —
+#   1) Cell 1 _write_gold() overwrites the Gold tables DATA-ONLY (identity preserved) instead of
+#      dropping-and-recreating them, so there is no new table object for OneLake/the lakehouse catalog
+#      to rediscover — the ~10-min 0xC14700DF window is eliminated at the source.
+#   2) The FULL REFRESH at the end of this cell: NB_03 reframes Gold_SM itself, immediately after the
+#      write, under the same identity that wrote the tables — so the model is authoritative the moment
+#      this notebook finishes and never depends on a later manual/scheduled refresh hitting a stale frame.
 import sempy_labs as labs
 import notebookutils
-from datetime import datetime, timezone
 
 _EXPECTED_TABLES = ["production_daily", "cost_monthly", "schedule_summary", "field_kpi_facts"]
 
-# Resolve the workspace + default (Gold_LH) lakehouse this notebook is attached to — at runtime.
+# Resolve the workspace this notebook is attached to — at runtime, so it is correct in Dev and in
+# every deployed stage (fabric-cicd rebinds per workspace).
 _ws_id = notebookutils.runtime.context.get("currentWorkspaceId") or spark.conf.get("trident.workspace.id")
-_lh_id = notebookutils.runtime.context.get("defaultLakehouseId") or spark.conf.get("trident.lakehouse.id")
-if not _ws_id or not _lh_id:
-    raise Exception("Could not resolve the current workspace/Gold_LH ids — cannot sync lakehouse metadata.")
+if not _ws_id:
+    raise Exception("Could not resolve the current workspace id — cannot refresh Gold_SM.")
 
-# Force the lakehouse SQL-endpoint / catalog metadata to sync and BLOCK until it completes (or 5 min).
-# Time the call so the run log shows WHEN the catalog was reconciled and HOW LONG it took to block.
-print("\n── Forcing lakehouse catalog/metadata sync so Gold_SM can see the new tables ──")
-_t0 = datetime.now(timezone.utc)
-print(f"   started : {_t0:%Y-%m-%d %H:%M:%S} UTC")
-_sync = labs.refresh_sql_endpoint_metadata(
-    item=_lh_id, type="Lakehouse", workspace=_ws_id,
-    timeout_unit="Minutes", timeout_value=5,
-)
-_t1 = datetime.now(timezone.utc)
-print(f"   finished: {_t1:%Y-%m-%d %H:%M:%S} UTC  (blocked {(_t1 - _t0).total_seconds():.1f}s)")
-
-# Pretty-print just the columns that matter, one aligned row per table, instead of dumping the
-# raw wide DataFrame. Per-table Status meaning (the API call ALWAYS runs and blocks to completion;
-# Status reports what each table needed):
-#   Success = re-synced this run (metadata was stale)   NotRun = already current (healthy, no work)
-#   Failure = the sync FAILED for that table (blocks the downstream Gold_SM refresh).
-def _col(df, *names):
-    for _n in names:
-        if hasattr(df, "columns") and _n in df.columns:
-            return _n
-    return None
-
-_name_col   = _col(_sync, "Table Name", "TableName", "table_name", "Name")
-_status_col = _col(_sync, "Status", "status")
-_counts = {"Success": 0, "NotRun": 0, "Failure": 0, "Failed": 0}
-_failed_tables = []
-if _name_col:
-    _icon = {"Success": "✓", "NotRun": "•", "Failure": "✗", "Failed": "✗"}
-    _rows = []
-    for _, _r in _sync.iterrows():
-        _nm  = str(_r[_name_col]).split(".")[-1]
-        _st  = str(_r[_status_col]) if _status_col else ""
-        if _st in _counts:
-            _counts[_st] += 1
-        if _st in ("Failure", "Failed"):
-            _failed_tables.append(_nm)
-        _rows.append((_icon.get(_st, "·"), _nm, _st))
-    _w = max((len(_n) for _, _n, _ in _rows), default=10)
-    for _ic, _nm, _st in sorted(_rows, key=lambda x: x[1]):
-        print(f"   {_ic} {_nm.ljust(_w)}  {_st}")
-    # Plain-language verdict so the run log answers "did they succeed?" without decoding statuses.
-    _resynced = _counts["Success"]
-    _current  = _counts["NotRun"]
-    _failures = _counts["Failure"] + _counts["Failed"]
-    print(f"   legend: ✓ re-synced  • already current  ✗ failed")
-    print(f"   result: {_resynced} re-synced, {_current} already current, {_failures} failed "
-          f"— all reconciled as of {_t1:%H:%M:%S} UTC")
-else:
-    print(_sync)
-
-# Defensive check: if the status DataFrame exposes a table-name column, confirm every expected Gold
-# table is present in the synced metadata before allowing the downstream refresh to proceed. The
-# "Table Name" column is schema-qualified (e.g. "dbo.production_daily"), so strip the schema prefix
-# before comparing against the bare names in _EXPECTED_TABLES.
-_synced = set()
-for _c in ("Table Name", "TableName", "table_name", "Name"):
-    if hasattr(_sync, "columns") and _c in _sync.columns:
-        _synced = {str(_v).split(".")[-1] for _v in _sync[_c]}
-        break
-
-# Guard 1: any table whose sync explicitly FAILED must stop the pipeline — a Direct-Lake refresh
-# against a failed table would error with 0xC14700DF.
-if _failed_tables:
-    raise Exception(
-        f"Lakehouse metadata sync FAILED for: {sorted(set(_failed_tables))}. "
-        f"A Direct-Lake refresh of Gold_SM would fail with 0xC14700DF. Investigate the SQL endpoint."
-    )
-
-# Guard 2: every expected Gold table must appear in the synced metadata.
-_missing = (set(_EXPECTED_TABLES) - _synced) if _synced else set()
-if _missing:
-    raise Exception(
-        f"Gold tables still not present in the synced lakehouse metadata after 5 min: {sorted(_missing)}. "
-        f"A Direct-Lake refresh would fail with 0xC14700DF. Investigate the lakehouse metadata sync."
-    )
-
-# Metadata is synced — now report final row counts for the run log.
+# Report final row counts for the run log.
 print("\n── Gold Layer Validation ────────────────────────────")
 for _tbl in _EXPECTED_TABLES:
     print(f"  Gold_LH.{_tbl}: {spark.table(f'Gold_LH.dbo.{_tbl}').count()} rows")
 
-print(f"\n✅ Lakehouse metadata synced for {sorted(_EXPECTED_TABLES)} — safe to refresh Gold_SM.")
-print("🏆 Gold aggregation COMPLETE — tables ready for Semantic Model")
+# ── Refresh Gold_SM HERE, under the identity that just wrote the tables ──────────────────────
+# This is the authoritative guarantee (see the cell header). Gold_SM is Direct Lake ON ONELAKE, so
+# it frames the Delta tables straight from OneLake; a FULL refresh reframes every Direct Lake
+# partition and makes the model pick up the just-recreated field_kpi_facts (and the other tables)
+# atomically, right now. Doing it from the notebook — same identity, immediately after the write —
+# removes the reframe race that makes a separate/automatic refresh fail with 0xC14700DF. NOTE: this
+# only TRIGGERS a refresh; it does NOT change the model, its measures, the calc table, or the report.
+_SEMANTIC_MODEL = "Gold_SM"
+print(f"\n── Refreshing Direct Lake (on OneLake) model '{_SEMANTIC_MODEL}' (full reframe) ──")
+try:
+    labs.refresh_semantic_model(
+        dataset=_SEMANTIC_MODEL, workspace=_ws_id, refresh_type="full",
+    )
+    print(f"✅ '{_SEMANTIC_MODEL}' refreshed (Direct Lake reframe complete) — report is up to date.")
+except Exception as _e:
+    # Convert the cryptic downstream 0xC14700DF into a precise, actionable root cause.
+    raise Exception(
+        f"Refresh of Direct Lake (on OneLake) model '{_SEMANTIC_MODEL}' FAILED: {_e}\n"
+        f"  • If the message says a table 'does not exist or access denied' (0xC14700DF): the identity\n"
+        f"    that OWNS '{_SEMANTIC_MODEL}' must have READ access to Gold_LH. Take over the model\n"
+        f"    (workspace → {_SEMANTIC_MODEL} → Settings → Take over) so its owner == the data writer.\n"
+        f"  • Direct Lake ON ONELAKE reads OneLake directly, so only matching owner↔reader access\n"
+        f"    (and this full reframe) can fix an access/ownership problem."
+    ) from _e
+
+print("🏆 Gold aggregation COMPLETE — tables written, Gold_SM refreshed")
 
 # METADATA ********************
 
