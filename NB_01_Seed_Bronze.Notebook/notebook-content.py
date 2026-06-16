@@ -44,10 +44,36 @@ from pyspark.sql.types import (
     StructType, StructField, StringType, DoubleType, DateType, IntegerType
 )
 from pyspark.sql.functions import current_timestamp, lit
-from datetime import date
+from datetime import date, timedelta
+import random
 
 spark = SparkSession.builder.getOrCreate()
 print(f"Spark version: {spark.version}")
+
+# Shared seeding window for ALL three Bronze tables. Data is generated deterministically
+# (fixed random seeds below) so every run reproduces byte-identical Bronze tables — important
+# for a repeatable CI/CD demo. Sized so EACH Bronze table lands at 50k+ rows.
+_SEED_START = date(2024, 1, 1)
+_SEED_DAYS  = 740                 # ~2 years of daily history
+
+# field -> (well_count, baseline oil_bbl, gas_mcf, water_bbl). Shared by the cost + schedule cells.
+# Well IDs are generated programmatically below, so well count per field is easy to scale.
+_field_profiles = {
+    "Oseberg":        (9, 1150.0, 4200.0, 300.0),
+    "Troll":          (8,  980.0, 6200.0, 150.0),
+    "Gullfaks":       (9, 2050.0, 3800.0, 510.0),
+    "Snorre":         (8,  620.0, 1600.0,  95.0),
+    "Ekofisk":        (9, 1640.0, 5100.0, 275.0),
+    "Johan Sverdrup": (9, 2800.0, 2200.0, 180.0),
+    "Grane":          (8,  760.0,  900.0, 410.0),
+    "Heidrun":        (8, 1320.0, 3400.0, 230.0),
+}
+
+# field -> list of generated well IDs (e.g. "OSE-001"), unique across all fields. Total = 68 wells.
+_field_wells = {
+    _f: [f"{_f[:3].upper()}-{_i:03d}" for _i in range(1, _n + 1)]
+    for _f, (_n, _o, _g, _w) in _field_profiles.items()
+}
 
 # Cell 2 — Production Raw Data (simulates PIMS source)
 production_schema = StructType([
@@ -60,38 +86,27 @@ production_schema = StructType([
     StructField("status",    StringType(), True),
 ])
 
-production_rows = [
-    ("W-001", date(2024,1,1),  "Oseberg",  1200.0, 4500.0, 320.0, "Active"),
-    ("W-001", date(2024,1,2),  "Oseberg",  1185.0, 4420.0, 318.0, "Active"),
-    ("W-001", date(2024,1,3),  "Oseberg",  1210.0, 4510.0, 321.0, "Active"),
-    ("W-001", date(2024,1,4),  "Oseberg",  1198.0, 4490.0, 319.0, "Active"),
-    ("W-001", date(2024,1,5),  "Oseberg",  1202.0, 4505.0, 320.0, "Active"),
-    ("W-002", date(2024,1,1),  "Troll",     980.0, 6200.0, 150.0, "Active"),
-    ("W-002", date(2024,1,2),  "Troll",     975.0, 6185.0, 148.0, "Active"),
-    ("W-002", date(2024,1,3),  "Troll",     982.0, 6210.0, 151.0, "Active"),
-    ("W-002", date(2024,1,4),  "Troll",     970.0, 6180.0, 147.0, "Active"),
-    ("W-002", date(2024,1,5),  "Troll",     978.0, 6195.0, 149.0, "Active"),
-    ("W-003", date(2024,1,1),  "Gullfaks", 2100.0, 3800.0, 510.0, "Active"),
-    ("W-003", date(2024,1,2),  "Gullfaks", 2085.0, 3790.0, 508.0, "Active"),
-    ("W-003", date(2024,1,3),  "Gullfaks", 2110.0, 3810.0, 512.0, "Active"),
-    ("W-003", date(2024,1,4),  "Gullfaks", 2095.0, 3800.0, 510.0, "Active"),
-    ("W-003", date(2024,1,5),  "Gullfaks", 2105.0, 3805.0, 511.0, "Active"),
-    ("W-004", date(2024,1,1),  "Snorre",    450.0, 1200.0,  90.0, "Maintenance"),
-    ("W-004", date(2024,1,2),  "Snorre",      0.0,    0.0,   0.0, "Shut-in"),
-    ("W-004", date(2024,1,3),  "Snorre",      0.0,    0.0,   0.0, "Shut-in"),
-    ("W-004", date(2024,1,4),  "Snorre",    200.0,  600.0,  45.0, "Active"),
-    ("W-004", date(2024,1,5),  "Snorre",    430.0, 1180.0,  88.0, "Active"),
-    ("W-005", date(2024,1,1),  "Ekofisk",  1650.0, 5100.0, 275.0, "Active"),
-    ("W-005", date(2024,1,2),  "Ekofisk",  1640.0, 5090.0, 272.0, "Active"),
-    ("W-005", date(2024,1,3),  "Ekofisk",  1655.0, 5110.0, 276.0, "Active"),
-    ("W-005", date(2024,1,4),  "Ekofisk",  1645.0, 5095.0, 273.0, "Active"),
-    ("W-005", date(2024,1,5),  "Ekofisk",  1648.0, 5098.0, 274.0, "Active"),
-    ("W-006", date(2024,1,1),  "Oseberg",   890.0, 3200.0, 180.0, "Active"),
-    ("W-006", date(2024,1,2),  "Oseberg",   885.0, 3195.0, 179.0, "Active"),
-    ("W-006", date(2024,1,3),  "Oseberg",   892.0, 3205.0, 181.0, "Active"),
-    ("W-006", date(2024,1,4),  "Oseberg",   888.0, 3198.0, 180.0, "Active"),
-    ("W-006", date(2024,1,5),  "Oseberg",   891.0, 3202.0, 180.0, "Active"),
-]
+# Generate one row per well per day across the seeding window. ~2% of well-days are Shut-in
+# (zero production, later filtered out in Silver) and ~4% are reduced-rate Maintenance; the rest
+# are Active with +/-8% daily noise around each field's baseline.
+random.seed(42)
+production_rows = []
+for _d in range(_SEED_DAYS):
+    _day = _SEED_START + timedelta(days=_d)
+    for _field, (_nwells, _oil, _gas, _water) in _field_profiles.items():
+        for _w in _field_wells[_field]:
+            _roll = random.random()
+            if _roll < 0.02:                                  # shut-in: no production
+                production_rows.append((_w, _day, _field, 0.0, 0.0, 0.0, "Shut-in"))
+            elif _roll < 0.06:                                # maintenance: reduced rate
+                _f = random.uniform(0.30, 0.60)
+                production_rows.append((_w, _day, _field,
+                    round(_oil * _f, 1), round(_gas * _f, 1), round(_water * _f, 1), "Maintenance"))
+            else:                                             # normal active day
+                production_rows.append((_w, _day, _field,
+                    round(_oil * random.uniform(0.92, 1.08), 1),
+                    round(_gas * random.uniform(0.92, 1.08), 1),
+                    round(_water * random.uniform(0.92, 1.08), 1), "Active"))
 
 df_prod = spark.createDataFrame(production_rows, production_schema)
 df_prod = df_prod.withColumn("ingested_at", current_timestamp()) \
@@ -100,7 +115,6 @@ df_prod = df_prod.withColumn("ingested_at", current_timestamp()) \
 df_prod.write.format("delta").mode("overwrite").option("overwriteSchema", "true") \
        .saveAsTable("Bronze_LH.dbo.production_raw")
 print(f"✅ Bronze_LH.production_raw: {df_prod.count()} rows written")
-display(df_prod)
 
 # Cell 3 — Cost Raw Data (simulates Alpha source)
 cost_schema = StructType([
@@ -114,28 +128,46 @@ cost_schema = StructType([
     StructField("vendor",     StringType(), True),
 ])
 
-cost_rows = [
-    ("C-001", date(2024,1,1), "Oseberg",  "OPEX",   45000.0, "Operations",  "PAB-2024",     "Schlumberger"),
-    ("C-002", date(2024,1,1), "Troll",    "OPEX",   62000.0, "Operations",  "PAB-2024",     "Halliburton"),
-    ("C-003", date(2024,1,1), "Gullfaks", "CAPEX", 250000.0, "Engineering", "GF-Expansion", "Baker Hughes"),
-    ("C-004", date(2024,1,1), "Snorre",   "OPEX",   18000.0, "Maintenance", "SN-Maint-Q1",  "Internal"),
-    ("C-005", date(2024,1,1), "Ekofisk",  "OPEX",   71000.0, "Operations",  "PAB-2024",     "Weatherford"),
-    ("C-006", date(2024,1,2), "Oseberg",  "OPEX",   44500.0, "Operations",  "PAB-2024",     "Schlumberger"),
-    ("C-007", date(2024,1,2), "Troll",    "OPEX",   61500.0, "Operations",  "PAB-2024",     "Halliburton"),
-    ("C-008", date(2024,1,2), "Gullfaks", "OPEX",   38000.0, "Operations",  "PAB-2024",     "Internal"),
-    ("C-009", date(2024,1,2), "Snorre",   "CAPEX",  95000.0, "Engineering", "SN-Upgrade",   "Baker Hughes"),
-    ("C-010", date(2024,1,2), "Ekofisk",  "OPEX",   70500.0, "Operations",  "PAB-2024",     "Weatherford"),
-    ("C-011", date(2024,1,3), "Oseberg",  "OPEX",   46000.0, "Operations",  "PAB-2024",     "Schlumberger"),
-    ("C-012", date(2024,1,3), "Troll",    "OPEX",   63000.0, "Operations",  "PAB-2024",     "Halliburton"),
-    ("C-013", date(2024,1,3), "Gullfaks", "CAPEX", 180000.0, "Engineering", "GF-Expansion", "Baker Hughes"),
-    ("C-014", date(2024,1,3), "Snorre",   "OPEX",   22000.0, "Maintenance", "SN-Maint-Q1",  "Internal"),
-    ("C-015", date(2024,1,3), "Ekofisk",  "OPEX",   69000.0, "Operations",  "PAB-2024",     "Weatherford"),
-    ("C-016", date(2024,1,4), "Oseberg",  "OPEX",   44000.0, "Operations",  "PAB-2024",     "Schlumberger"),
-    ("C-017", date(2024,1,4), "Troll",    "OPEX",   60500.0, "Operations",  "PAB-2024",     "Halliburton"),
-    ("C-018", date(2024,1,4), "Gullfaks", "OPEX",   39000.0, "Operations",  "PAB-2024",     "Internal"),
-    ("C-019", date(2024,1,4), "Snorre",   "OPEX",   19500.0, "Maintenance", "SN-Maint-Q1",  "Internal"),
-    ("C-020", date(2024,1,4), "Ekofisk",  "OPEX",   72000.0, "Operations",  "PAB-2024",     "Weatherford"),
+# One OPEX row per field per day BROKEN OUT across cost categories, plus occasional CAPEX events on
+# fields with a capital project. Generated deterministically (seed=7) so the cost table is
+# reproducible across runs. 8 fields x _SEED_DAYS x 10 categories keeps this well above 50k rows.
+_cost_opex_base = {       # TOTAL daily OPEX baseline per field (USD), split across the categories below
+    "Oseberg": 45000.0, "Troll": 62000.0, "Gullfaks": 38000.0, "Snorre": 19000.0,
+    "Ekofisk": 71000.0, "Johan Sverdrup": 88000.0, "Grane": 27000.0, "Heidrun": 41000.0,
+}
+# (category department, share-of-daily-base) — shares sum to 1.0; each row uses a distinct department
+_opex_categories = [
+    ("Operations",   0.22), ("Utilities",    0.18), ("Maintenance", 0.15),
+    ("Process",      0.10), ("Supply Chain", 0.09), ("HR",          0.08),
+    ("Logistics",    0.06), ("HSE",          0.05), ("Subsea",      0.04),
+    ("Digital",      0.03),
 ]
+_field_vendor = {
+    "Oseberg": "Schlumberger", "Troll": "Halliburton", "Gullfaks": "Baker Hughes",
+    "Snorre": "Internal", "Ekofisk": "Weatherford", "Johan Sverdrup": "Schlumberger",
+    "Grane": "Halliburton", "Heidrun": "Baker Hughes",
+}
+_capex_projects = {       # fields with an active capital project (others are OPEX-only)
+    "Gullfaks": "GF-Expansion", "Snorre": "SN-Upgrade", "Johan Sverdrup": "JS-Phase2",
+    "Heidrun": "HD-Subsea", "Ekofisk": "EK-Revamp",
+}
+
+random.seed(7)
+cost_rows = []
+_cid = 1
+for _d in range(_SEED_DAYS):
+    _day = _SEED_START + timedelta(days=_d)
+    for _field, _base in _cost_opex_base.items():
+        for _dept, _share in _opex_categories:
+            cost_rows.append((f"C-{_cid:06d}", _day, _field, "OPEX",
+                round(_base * _share * random.uniform(0.90, 1.10), 1),
+                _dept, "PAB-2024", _field_vendor[_field]))
+            _cid += 1
+        if _field in _capex_projects and random.random() < 0.06:       # ~6% CAPEX event
+            cost_rows.append((f"C-{_cid:06d}", _day, _field, "CAPEX",
+                round(random.uniform(90000.0, 260000.0), 1),
+                "Engineering", _capex_projects[_field], "Baker Hughes"))
+            _cid += 1
 
 df_cost = spark.createDataFrame(cost_rows, cost_schema)
 df_cost = df_cost.withColumn("ingested_at", current_timestamp()) \
@@ -157,18 +189,24 @@ schedule_schema = StructType([
     StructField("assigned_to",  StringType(), True),
 ])
 
-schedule_rows = [
-    ("S-001", date(2024,1,5),  date(2024,1,10), "Well Inspection",          "Oseberg",  "High",     "Planned",     "Team Alpha"),
-    ("S-002", date(2024,1,8),  date(2024,1,12), "Maintenance Shutdown",     "Snorre",   "Critical", "In-Progress", "Team Beta"),
-    ("S-003", date(2024,1,15), date(2024,1,20), "Subsea Survey",            "Troll",    "Medium",   "Planned",     "External Vendor"),
-    ("S-004", date(2024,1,20), date(2024,1,25), "Chemical Treatment",       "Gullfaks", "Low",      "Planned",     "Team Alpha"),
-    ("S-005", date(2024,1,22), date(2024,1,28), "Production Test",          "Ekofisk",  "High",     "Planned",     "Team Gamma"),
-    ("S-006", date(2024,2,1),  date(2024,2,5),  "Safety Audit",             "Oseberg",  "Critical", "Planned",     "HSE Team"),
-    ("S-007", date(2024,2,10), date(2024,2,14), "Equipment Upgrade",        "Troll",    "High",     "Planned",     "Team Beta"),
-    ("S-008", date(2024,2,15), date(2024,2,18), "Routine Inspection",       "Gullfaks", "Low",      "Planned",     "Team Alpha"),
-    ("S-009", date(2024,2,20), date(2024,2,25), "Well Stimulation",         "Ekofisk",  "High",     "Planned",     "External Vendor"),
-    ("S-010", date(2024,2,22), date(2024,2,26), "Pipeline Integrity Check", "Snorre",   "Critical", "Planned",     "Team Gamma"),
-]
+# Generate 50,000 scheduled activities scattered across fields and dates within the seeding window.
+# Deterministic (seed=13) so the schedule table is reproducible across runs.
+_activities = ["Well Inspection", "Maintenance Shutdown", "Subsea Survey", "Chemical Treatment",
+               "Production Test", "Safety Audit", "Equipment Upgrade", "Routine Inspection",
+               "Well Stimulation", "Pipeline Integrity Check"]
+_priorities = ["Critical", "High", "Medium", "Low"]
+_statuses   = ["Planned", "In-Progress", "Completed"]
+_teams      = ["Team Alpha", "Team Beta", "Team Gamma", "HSE Team", "External Vendor"]
+_fields_list = list(_field_profiles.keys())
+
+random.seed(13)
+schedule_rows = []
+for _i in range(1, 50001):
+    _start = _SEED_START + timedelta(days=random.randint(0, _SEED_DAYS - 1))
+    _end   = _start + timedelta(days=random.randint(2, 10))
+    schedule_rows.append((f"S-{_i:06d}", _start, _end,
+        random.choice(_activities), random.choice(_fields_list),
+        random.choice(_priorities), random.choice(_statuses), random.choice(_teams)))
 
 df_sched = spark.createDataFrame(schedule_rows, schedule_schema)
 df_sched = df_sched.withColumn("ingested_at", current_timestamp()) \
