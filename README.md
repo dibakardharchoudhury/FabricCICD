@@ -54,7 +54,13 @@ workspace and **commit from Fabric**.
    - Local / CI: leave `local_repo_path = ""` to auto-detect the checked-out repo.
 2. **Run all cells.** `NB_04_Deploy` publishes every item, rewrites all Dev GUIDs to the
    target stage, and rebinds the Direct Lake model to the target's `Gold_LH`.
-3. In the target workspace, run **`PL_Refresh_Master`** once. Git never carries table data,
+3. **One-time per stage — sign in to the `DF_Gold_PA` destination.** fabric-cicd publishes the
+   dataflow definition but **cannot bind its Dataflow Gen2 connection** (connections are
+   tenant-level and not auto-mapped). On a stage's first deploy, open **`DF_Gold_PA` → Edit →
+   `GoldProductionDaily` → Data destination** (gear), confirm it points at this stage's `Gold_LH`
+   / `production_daily` (Replace), **sign in**, and **Save**. You only do this once per stage; later
+   deploys reuse the connection.
+4. In the target workspace, run **`PL_Refresh_Master`** once. Git never carries table data,
    so this (re)creates the tables, loads data, and `NB_03` refreshes `Gold_SM`.
 
 That's it — `Gold_Dashboard` in the target now shows live data.
@@ -92,6 +98,8 @@ Nothing is hardcoded — add an item to the repo and it is picked up automatical
   `PL_Refresh_Master` after a deploy.
 - **Direct Lake on OneLake** can't be rebound by a deployment rule, so `NB_04` does it in
   code (needs `semantic-link-labs` and ownership of the model).
+- **The `DF_Gold_PA` connection isn't deployed** — fabric-cicd can't bind a Dataflow Gen2
+  connection, so the destination needs a **one-time sign-in per stage** (see step 3 above).
 - **`parameter.yml` is generated at deploy time** and not checked in — keep
   `generate_parameter_yml = True`.
 - Items pair across stages by **name** — keep display names identical between workspaces.
