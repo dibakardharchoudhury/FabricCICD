@@ -519,8 +519,14 @@ display(HTML(
 # -----------------------------------------------------------------------------------
 # Standalone teardown helper — NOT part of the deploy flow above. Run it ON ITS OWN when
 # you want a clean slate in the target workspace (e.g. to re-test a from-empty deploy).
-# It deletes ALL items (reports, semantic models, pipelines, dataflows, notebooks,
-# lakehouses, environments, ...) in `target_workspace_name`; the workspace itself stays.
+# It DYNAMICALLY lists whatever items actually exist in `target_workspace_name` and deletes
+# ALL of them (reports, semantic models, pipelines, dataflows, notebooks, lakehouses,
+# environments, ...) — no hardcoded allow-list. The workspace itself stays.
+#
+# It does NOT delete SQL endpoints: a Lakehouse/Warehouse owns a SQLEndpoint child that Fabric
+# creates and removes AUTOMATICALLY with its parent, so those are skipped (deleting one directly
+# only errors). There is no special "staging lakehouse" handling — every Lakehouse found is just
+# deleted like any other item.
 #
 # This is IRREVERSIBLE — lakehouse tables/data go with the lakehouse. To prevent an
 # accidental wipe on "Run all", it is GUARDED: nothing is deleted until you set
@@ -575,21 +581,34 @@ if not target_workspace_id:
         _avail = ", ".join(sorted(w["displayName"] for w in _wss)) or "(none visible)"
         raise ValueError(f"Workspace '{target_workspace_name}' not visible to this identity. Visible: {_avail}")
 
-# List every item currently in the target workspace.
-_all_items = _fabric_get(f"/workspaces/{target_workspace_id}/items")["value"]
+# List every item currently in the target workspace (fully DYNAMIC — whatever is actually there is
+# what gets cleaned up, regardless of type). Then drop SYSTEM-MANAGED CHILD items that must NOT be
+# deleted on their own: a Lakehouse (or Warehouse) owns a SQLEndpoint that Fabric creates and DELETES
+# AUTOMATICALLY when the parent is removed. Calling DELETE on a SQLEndpoint directly just errors and
+# is pointless, so we skip it and let it disappear with its lakehouse. Everything else found in the
+# workspace IS deleted, no hardcoded allow-list.
+_AUTO_MANAGED_TYPES = {"SQLEndpoint"}   # auto-created AND auto-deleted with their parent Lakehouse/Warehouse
+_all_raw    = _fabric_get(f"/workspaces/{target_workspace_id}/items")["value"]
+_skipped    = [it for it in _all_raw if it["type"] in _AUTO_MANAGED_TYPES]
+_all_items  = [it for it in _all_raw if it["type"] not in _AUTO_MANAGED_TYPES]
 
 if not _all_items:
-    _say(f"Target workspace <b>{target_workspace_name}</b> already has no items — nothing to delete.", "info")
+    _say(f"Target workspace <b>{target_workspace_name}</b> already has no deletable items — nothing to delete.", "info")
 elif confirm_delete_workspace != target_workspace_name:
     _say(f"<b>{len(_all_items)}</b> item(s) in <b>{target_workspace_name}</b> would be deleted. "
          f"This is a DRY RUN — set <code>confirm_delete_workspace = \"{target_workspace_name}\"</code> "
          f"and re-run THIS cell to actually delete them.", "warn")
     for _it in _all_items:
         _say(f"&nbsp;&nbsp;• {_it['displayName']} <code>({_it['type']})</code>", "info")
+    if _skipped:
+        _say(f"Skipping <b>{len(_skipped)}</b> system-managed item(s) "
+             f"(auto-deleted with their parent): "
+             + ", ".join(f"{_it['displayName']} ({_it['type']})" for _it in _skipped), "info")
 else:
-    # Delete dependents before their sources so dependency locks don't block a delete.
-    # Anything not in this list (e.g. Lakehouse) is deleted last. A couple of retry passes
-    # mop up items whose first delete failed because a dependent had not gone yet.
+    # Delete EVERY remaining item dynamically. _order is ONLY a best-effort ordering hint so that
+    # dependents go before their sources (fewer dependency-lock failures); any type NOT listed
+    # (now or in future) still gets deleted — it is just ranked last. Three retry passes mop up
+    # items whose first delete failed because a dependent had not gone yet.
     _order = ["Report", "DataPipeline", "Dataflow", "Notebook", "SemanticModel",
               "Environment", "Eventstream", "KQLDashboard", "KQLQueryset", "KQLDatabase",
               "Eventhouse", "Warehouse", "SQLDatabase", "MirroredDatabase", "Lakehouse"]
