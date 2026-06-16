@@ -22,6 +22,10 @@
 # META           "id": "06434335-fbfd-4d2b-879d-4962bdd8d605"
 # META         }
 # META       ]
+# META     },
+# META     "environment": {
+# META       "environmentId": "86313016-e213-a285-4d09-9801e4f0072b",
+# META       "workspaceId": "00000000-0000-0000-0000-000000000000"
 # META     }
 # META   }
 # META }
@@ -149,6 +153,7 @@ df_kpi_facts.write \
     .saveAsTable("Gold_LH.dbo.field_kpi_facts")
 
 print(f"✅ Gold_LH.field_kpi_facts: {df_kpi_facts.count()} rows")
+
 
 # METADATA ********************
 
