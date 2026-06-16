@@ -2,7 +2,6 @@
 section Section1;
 shared SilverWorkspaceId = "292e18c3-b95e-42d1-bb02-9a2064fee5b8" meta [IsParameterQuery = true, IsParameterQueryRequired = true, Type = type text];
 shared SilverLakehouseId = "4207398e-6d15-4407-8d8d-cbb50d661ec6" meta [IsParameterQuery = true, IsParameterQueryRequired = true, Type = type text];
-[DataDestinations = {[Definition = [Kind = "Reference", QueryName = "SilverProduction_DataDestination", IsNewTarget = true], Settings = [Kind = "Automatic", TypeSettings = [Kind = "Table"]]]}]
 shared SilverProduction = let
   Source = Lakehouse.Contents([CreateNavigationProperties = false, EnableFolding = false]),
   Workspace = Source{[workspaceId = SilverWorkspaceId]}[Data],
@@ -10,6 +9,7 @@ shared SilverProduction = let
   Table = Lake{[Id = "production_conformed", ItemKind = "Table"]}[Data]
 in
   Table;
+[DataDestinations = {[Definition = [Kind = "Reference", QueryName = "GoldProductionDaily_DataDestination", IsNewTarget = true], Settings = [Kind = "Automatic", TypeSettings = [Kind = "Table"]]]}]
 shared GoldProductionDaily = let
   Source = SilverProduction,
   Grouped = Table.Group(Source, {"date", "field"}, {
@@ -30,7 +30,7 @@ shared GoldProductionDaily = let
   Sorted = Table.Sort(WithTimestamp, {{"date", Order.Ascending}, {"field", Order.Ascending}})
 in
   Sorted;
-shared SilverProduction_DataDestination = let
+shared GoldProductionDaily_DataDestination = let
   Pattern = Lakehouse.Contents([CreateNavigationProperties = false, EnableFolding = false, HierarchicalNavigation = true, EnableVorder = true, OutputMetadataRefresh = true]),
   Navigation_1 = Pattern{[workspaceId = "292e18c3-b95e-42d1-bb02-9a2064fee5b8"]}[Data],
   Navigation_2 = Navigation_1{[lakehouseId = "06434335-fbfd-4d2b-879d-4962bdd8d605"]}[Data],

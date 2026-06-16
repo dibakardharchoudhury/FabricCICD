@@ -26,9 +26,9 @@
       "queryId": "3227b85e-4cb5-4b86-a091-ad2a64ae3114",
       "queryName": "GoldProductionDaily"
     },
-    "SilverProduction_DataDestination": {
+    "GoldProductionDaily_DataDestination": {
       "queryId": "e9853514-812a-42e5-94f9-5664ddaccb1e",
-      "queryName": "SilverProduction_DataDestination",
+      "queryName": "GoldProductionDaily_DataDestination",
       "isHidden": true,
       "loadEnabled": false
     }

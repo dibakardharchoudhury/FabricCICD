@@ -48,7 +48,7 @@
 # Cell 1 — Imports
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
-    col, sum as _sum, avg, count, max as _max, min as _min,
+    col, sum as _sum, avg, count, countDistinct, max as _max, min as _min,
     round as _round, date_format, current_timestamp, lit
 )
 spark = SparkSession.builder.getOrCreate()
@@ -116,16 +116,50 @@ df_gold_sched.write \
 
 print(f"✅ Gold_LH.schedule_summary: {df_gold_sched.count()} rows")
 
-# Cell 5 — Cross-domain enrichment: KPI fact table for reporting
-df_prod_summary = (
-    spark.table("Gold_LH.dbo.production_daily")
-    .groupBy("field")
-    .agg(
-        avg("total_boe").alias("avg_daily_boe"),
-        _sum("total_oil_bbl").alias("cumulative_oil_bbl"),
-        avg("active_well_count").alias("avg_active_wells"),
+# Cell 5 — Cross-domain enrichment: KPI fact table for reporting (one row per field).
+# OUTPUT SCHEMA IS FIXED by Gold_SM: field, avg_daily_boe, cumulative_oil_bbl, avg_active_wells,
+# total_cost_usd, avg_cost_per_boe. Do NOT change those output columns.
+#
+# production_daily is OWNED by DF_Gold_PA and normally carries the AGGREGATED schema (date, field,
+# total_oil_bbl, total_boe, active_well_count, ...). But if DF_Gold_PA has not refreshed it this run
+# (e.g. its Silver source params are unset), the table can still hold stale ROW-LEVEL Silver columns
+# (well_id, date, field, oil_bbl, boe_total, ...). Read it schema-adaptively so this cell produces the
+# SAME per-field KPIs either way instead of failing with UNRESOLVED_COLUMN on total_boe.
+_df_prod = spark.table("Gold_LH.dbo.production_daily")
+_prod_cols = set(_df_prod.columns)
+
+if {"total_boe", "total_oil_bbl", "active_well_count"} <= _prod_cols:
+    # Aggregated (DF_Gold_PA) schema — already one row per (date, field).
+    df_prod_summary = (
+        _df_prod
+        .groupBy("field")
+        .agg(
+            avg("total_boe").alias("avg_daily_boe"),
+            _sum("total_oil_bbl").alias("cumulative_oil_bbl"),
+            avg("active_well_count").alias("avg_active_wells"),
+        )
     )
-)
+else:
+    # Stale row-level (Silver) schema — first roll up to daily field grain, then to per-field KPIs so
+    # the numbers match what the aggregated schema would have produced.
+    _daily = (
+        _df_prod
+        .groupBy("field", "date")
+        .agg(
+            _sum("boe_total").alias("_daily_boe"),
+            _sum("oil_bbl").alias("_daily_oil"),
+            countDistinct("well_id").alias("_active_wells"),
+        )
+    )
+    df_prod_summary = (
+        _daily
+        .groupBy("field")
+        .agg(
+            avg("_daily_boe").alias("avg_daily_boe"),
+            _sum("_daily_oil").alias("cumulative_oil_bbl"),
+            avg("_active_wells").alias("avg_active_wells"),
+        )
+    )
 
 df_cost_summary = (
     spark.table("Gold_LH.dbo.cost_monthly")
