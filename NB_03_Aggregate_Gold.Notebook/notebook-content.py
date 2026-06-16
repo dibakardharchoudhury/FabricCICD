@@ -182,6 +182,7 @@ print(f"✅ Gold_LH.field_kpi_facts: {df_kpi_facts.count()} rows")
 #   RUNTIME, so it is correct in Dev and in every deployed stage (fabric-cicd rebinds per workspace).
 import sempy_labs as labs
 import notebookutils
+from datetime import datetime, timezone
 
 _EXPECTED_TABLES = ["production_daily", "cost_monthly", "schedule_summary", "field_kpi_facts"]
 
@@ -192,14 +193,22 @@ if not _ws_id or not _lh_id:
     raise Exception("Could not resolve the current workspace/Gold_LH ids — cannot sync lakehouse metadata.")
 
 # Force the lakehouse SQL-endpoint / catalog metadata to sync and BLOCK until it completes (or 5 min).
+# Time the call so the run log shows WHEN the catalog was reconciled and HOW LONG it took to block.
 print("\n── Forcing lakehouse catalog/metadata sync so Gold_SM can see the new tables ──")
+_t0 = datetime.now(timezone.utc)
+print(f"   started : {_t0:%Y-%m-%d %H:%M:%S} UTC")
 _sync = labs.refresh_sql_endpoint_metadata(
     item=_lh_id, type="Lakehouse", workspace=_ws_id,
     timeout_unit="Minutes", timeout_value=5,
 )
+_t1 = datetime.now(timezone.utc)
+print(f"   finished: {_t1:%Y-%m-%d %H:%M:%S} UTC  (blocked {(_t1 - _t0).total_seconds():.1f}s)")
 
 # Pretty-print just the columns that matter, one aligned row per table, instead of dumping the
-# raw wide DataFrame. "Success" = re-synced this run; "NotRun" = already current (also healthy).
+# raw wide DataFrame. Per-table Status meaning (the API call ALWAYS runs and blocks to completion;
+# Status reports what each table needed):
+#   Success = re-synced this run (metadata was stale)   NotRun = already current (healthy, no work)
+#   Failure = the sync FAILED for that table (blocks the downstream Gold_SM refresh).
 def _col(df, *names):
     for _n in names:
         if hasattr(df, "columns") and _n in df.columns:
@@ -208,16 +217,29 @@ def _col(df, *names):
 
 _name_col   = _col(_sync, "Table Name", "TableName", "table_name", "Name")
 _status_col = _col(_sync, "Status", "status")
+_counts = {"Success": 0, "NotRun": 0, "Failure": 0, "Failed": 0}
+_failed_tables = []
 if _name_col:
     _icon = {"Success": "✓", "NotRun": "•", "Failure": "✗", "Failed": "✗"}
     _rows = []
     for _, _r in _sync.iterrows():
         _nm  = str(_r[_name_col]).split(".")[-1]
         _st  = str(_r[_status_col]) if _status_col else ""
+        if _st in _counts:
+            _counts[_st] += 1
+        if _st in ("Failure", "Failed"):
+            _failed_tables.append(_nm)
         _rows.append((_icon.get(_st, "·"), _nm, _st))
     _w = max((len(_n) for _, _n, _ in _rows), default=10)
     for _ic, _nm, _st in sorted(_rows, key=lambda x: x[1]):
         print(f"   {_ic} {_nm.ljust(_w)}  {_st}")
+    # Plain-language verdict so the run log answers "did they succeed?" without decoding statuses.
+    _resynced = _counts["Success"]
+    _current  = _counts["NotRun"]
+    _failures = _counts["Failure"] + _counts["Failed"]
+    print(f"   legend: ✓ re-synced  • already current  ✗ failed")
+    print(f"   result: {_resynced} re-synced, {_current} already current, {_failures} failed "
+          f"— all reconciled as of {_t1:%H:%M:%S} UTC")
 else:
     print(_sync)
 
@@ -226,10 +248,20 @@ else:
 # "Table Name" column is schema-qualified (e.g. "dbo.production_daily"), so strip the schema prefix
 # before comparing against the bare names in _EXPECTED_TABLES.
 _synced = set()
-for _col in ("Table Name", "TableName", "table_name", "Name"):
-    if hasattr(_sync, "columns") and _col in _sync.columns:
-        _synced = {str(_v).split(".")[-1] for _v in _sync[_col]}
+for _c in ("Table Name", "TableName", "table_name", "Name"):
+    if hasattr(_sync, "columns") and _c in _sync.columns:
+        _synced = {str(_v).split(".")[-1] for _v in _sync[_c]}
         break
+
+# Guard 1: any table whose sync explicitly FAILED must stop the pipeline — a Direct-Lake refresh
+# against a failed table would error with 0xC14700DF.
+if _failed_tables:
+    raise Exception(
+        f"Lakehouse metadata sync FAILED for: {sorted(set(_failed_tables))}. "
+        f"A Direct-Lake refresh of Gold_SM would fail with 0xC14700DF. Investigate the SQL endpoint."
+    )
+
+# Guard 2: every expected Gold table must appear in the synced metadata.
 _missing = (set(_EXPECTED_TABLES) - _synced) if _synced else set()
 if _missing:
     raise Exception(
