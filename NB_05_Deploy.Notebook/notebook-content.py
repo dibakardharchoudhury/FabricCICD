@@ -40,8 +40,7 @@
 #   `NB_01_Seed_Bronze.Notebook/` with `.platform` + `notebook-content.py`,
 #   `DF_Gold_PA.Dataflow/`, `PL_Refresh_Master.DataPipeline/`, `Gold_SM.SemanticModel/`).
 #   That layout is produced when the workspace is Git-connected and you COMMIT FROM Fabric.
-#   Point REPO_DIRECTORY at the root that contains those folders + parameter.yml, NOT at
-#   the flat demo files in `notebooks/*.py`.
+#   Point REPO_DIRECTORY at the repo root that contains those item folders + parameter.yml.
 #
 # Run it: standalone (not inside PL_Refresh_Master) as the deploy step — e.g. from a
 #   notebook scheduled after a merge to main, or invoked by your GitHub Actions runner.
@@ -72,76 +71,79 @@ local_repo_path = ""                           # "" = auto-detect; path = use it
 # CLONE path below IS used — git_repo_url + key_vault_url + git_pat_secret are all REQUIRED.
 git_repo_url   = "https://github.com/dibakardharchoudhury/FabricCICD.git"
 git_branch     = "main"
-key_vault_url  = "https://akvFabCap.vault.azure.net/"   # <-- set: your Key Vault URL
+key_vault_url  = "https://akvFabCap.vault.azure.net/"   # Key Vault holding the GitHub PAT secret
 git_pat_secret = "github-pat"                 # KV secret holding a repo-scoped GitHub PAT
 repo_subdir    = ""                            # subfolder inside the repo that holds the
                                                # *.Notebook/*.DataPipeline folders ("" = root)
 
 # --- Merged from NB_04: build parameter.yml from live Dev GUIDs + post-deploy rebind -----
 # generate_parameter_yml: when True, NB_05 OVERWRITES parameter.yml in the working copy with
-#   values resolved AT DEPLOY TIME, so you never hand-maintain GUIDs. Sources, in order:
-#   NB_04's Variable Library 'VL_CICD_Bindings' (workspace + 3 lakehouse Dev GUIDs) and
-#   name-resolution for the notebook/dataflow/semantic-model Dev GUIDs the VL does not store.
-#   Each find_value is a DEV literal; each replace_value is a fabric-cicd dynamic token that
-#   resolves against the TARGET stage. Set False to use the checked-in parameter.yml as-is.
+#   values resolved AT DEPLOY TIME, so you never hand-maintain GUIDs. EVERY item is DISCOVERED
+#   FROM THE REPO (the <DisplayName>.<ItemType> folders) — notebooks, dataflows, semantic models
+#   and lakehouses — and each one's Dev GUID is resolved BY NAME from the Dev workspace. Nothing
+#   is hardcoded: add an item to the repo and it is picked up automatically. Each find_value is a
+#   DEV literal GUID; each replace_value is a fabric-cicd dynamic token that resolves against the
+#   TARGET stage. Set False to use the checked-in parameter.yml as-is.
 generate_parameter_yml = True
 dev_workspace_name     = "ws-CICD-DevTest"     # SOURCE stage; its GUIDs become find_value
-vl_name                = "VL_CICD_Bindings"    # NB_04's Variable Library
-gen_notebook_names     = ["NB_01_Seed_Bronze", "NB_02_Transform_Silver", "NB_03_Aggregate_Gold"]
-gen_dataflow_name      = "DF_Gold_PA"
-gen_semantic_model     = "Gold_SM"
 
-# rebind_direct_lake: after publish, re-point Gold_SM's Direct Lake on OneLake connection to
-#   THIS stage's Gold_LH (folds in NB_04 Cell 10). Needs semantic-link-labs + ownership of
-#   Gold_SM. Replaces the parameter.yml 'semantic_model_binding' block, which would need a
-#   tenant connection GUID that is not name-resolvable.
+# rebind_direct_lake: after publish, re-point every Direct-Lake-on-OneLake semantic model in the
+#   repo to THIS stage's matching lakehouse. Each SM is DISCOVERED from the repo; its OneLake
+#   source path (.../<workspaceGuid>/<lakehouseGuid>) is read from the model definition, the Dev
+#   lakehouse GUID is translated back to a name, and the model is rebound to the SAME-named
+#   lakehouse in the target stage. Needs semantic-link-labs + ownership of the model(s). A
+#   find_replace cannot safely rewrite a Direct Lake expression, so this is done in code here.
 rebind_direct_lake     = True
 
-# Item types fabric-cicd is allowed to publish AND (when remove_orphans=True) to delete.
-# Default = ALL supported types, so any item present in the repo is picked up automatically
-# (e.g. Gold_Dashboard.Report, future Eventhouse/Warehouse/etc.) without editing this list.
-# Types with no folder in the repo are simply skipped (harmless no-op).
+# NOTE: the Variable Library (VL_CICD_Bindings) is intentionally NOT deployed. Every stage
+#   binding is done by parameter.yml's $items tokens (notebook default lakehouses, dataflow
+#   Silver, pipeline notebook/dataflow/SM refs) plus the Direct Lake rebind below — nothing in
+#   the runtime pipeline reads the VL. It is therefore excluded from publish scope (Cell 4b) and
+#   never code-managed.
+
+# Item types fabric-cicd may publish are DISCOVERED FROM THE REPO AT RUN TIME (Cell 4b), NOT
+# hardcoded here: Cell 4b scans repo_directory for `*.<ItemType>` folders and intersects them
+# with the supported allow-list below, so item_type_in_scope contains EXACTLY the types present
+# in the repo. Absent types (Eventhouse, Warehouse, KQL*, etc.) are never in scope — nothing
+# extra is published, and with remove_orphans=True nothing extra is deleted. The list never
+# needs editing as the repo grows or shrinks.
 #
-# LAKEHOUSE is toggled separately via include_lakehouses (below) because it needs care:
-#   - fabric-cicd pairs items by the logical id in each .platform (NOT by display name). For
-#     pairing to work, the SAME logical id must exist on both sides. That holds when every
-#     stage's lakehouse originates from this Git repo (Git-connect the target ONCE so the
-#     .platform logical ids line up, OR let fabric-cicd create them here on first deploy).
-#   - DUPLICATE RISK: if Bronze_LH/Silver_LH/Gold_LH were created independently by workspace
-#     setup (their own logical ids, different from the repo's), publishing the repo lakehouses
-#     makes a SECOND "Bronze_LH" in the target — then $items.Lakehouse.Bronze_LH.$id in
-#     parameter.yml is AMBIGUOUS. To avoid this, either (a) deploy lakehouses from this repo
-#     in every stage, or (b) ensure the pre-created lakehouses share the repo's logical ids
-#     via the Git connection.
+# _supported_item_types is ONLY the allow-list the discovery intersects against (it filters out
+# stray non-item folders such as `.git`).
+#
+# LAKEHOUSE is deployed from the repo like every other item (include_lakehouses=True, default):
+#   - The lakehouses live in the repo (Bronze_LH/Silver_LH/Gold_LH). They are authored in Dev and
+#     DEPLOYED to every other stage here. fabric-cicd pairs them by the logical id in each
+#     .platform, so the SAME repo deployed to each stage keeps the ids lined up.
+#   - fabric-cicd is IDEMPOTENT: a lakehouse that already exists in the target is left as-is and
+#     only updated when its definition changed — it is never blindly recreated.
+#   - Because the lakehouses are in scope, the $items.Lakehouse.<name>.$id tokens in parameter.yml
+#     resolve, so the notebook default-lakehouse and dataflow Silver bindings rebind natively
+#     (no strip-before-publish, no post-publish code rebind).
 #   - A Lakehouse deploy creates the SHELL only (no table data); NB_01/02/03 + DF_Gold still
 #     populate the tables at runtime.
-_base_item_types = [
-    "Notebook", "Dataflow", "DataPipeline", "SemanticModel", "Report",
+_supported_item_types = [
+    "Notebook", "Dataflow", "DataPipeline", "SemanticModel", "Report", "Lakehouse",
     "Environment", "VariableLibrary", "Eventhouse", "KQLDatabase", "KQLQueryset",
     "KQLDashboard", "Eventstream", "Warehouse", "MirroredDatabase", "SQLDatabase",
     "Reflex", "CopyJob", "GraphQLApi", "MountedDataFactory", "SparkJobDefinition",
     "DataAgent", "ApacheAirflowJob", "UserDataFunction",
 ]
 
-# include_lakehouses: set True to let fabric-cicd publish/manage Lakehouse items from the
-# repo; False to leave lakehouses to workspace setup and only reference the existing ones by
-# name via $items.Lakehouse.<name>.$id in parameter.yml (avoids the duplicate risk above).
-include_lakehouses = False
+# include_lakehouses: True (default) = DEPLOY the repo's lakehouses like every other item and let
+# fabric-cicd pair/update them by logical id (idempotent — existing lakehouses are updated only on
+# change). This is what makes the $items.Lakehouse.<name>.$id tokens resolve. Set False ONLY if
+# the target's lakehouses are managed entirely outside this repo AND already share its logical ids.
+include_lakehouses = True
 
-item_type_in_scope = _base_item_types + (["Lakehouse"] if include_lakehouses else [])
-
-# exclude_item_name_regex: skip items by DISPLAY NAME at publish time (regex). Use this when
-# an item can't be published into THIS stage as-is. Common case: a Fabric ENVIRONMENT whose
-# Spark compute (driver/executor size x num executors) was authored against a LARGER Dev pool
-# than the target stage has — publish then fails with SparkSettingsComputeExceedsPoolLimit
-# (e.g. claimed 80 cores/560 GB vs a 48-core/336 GB pool). Excluding it lets every other item
-# deploy; the rest of the workspace is unaffected.
-#   PROPER FIX (then set this back to ""): lower the Environment's Spark compute in the Git
-#   SOURCE — edit its Setting/Sparkcompute.yml (instancePool / driverCores / driverMemory /
-#   executorCores / executorMemory / numExecutors) so claimed cores+memory fit the target
-#   pool, commit from Fabric, and re-run. fabric-cicd publishes those values verbatim and
-#   cannot shrink them, so the source must already fit the smallest stage's pool.
-exclude_item_name_regex = "^semanticlink$"   # "" = publish every item; regex = skip matches
+# exclude_item_name_regex: skip items by DISPLAY NAME at publish time (regex). Escape hatch
+# only — default "" publishes EVERYTHING, including the semanticlink Environment, exactly as it
+# is in the repo. fabric-cicd writes the Environment's Spark compute VERBATIM, so the source
+# file (semanticlink.Environment/Setting/Sparkcompute.yml) must already fit the target stage's
+# pool. If a future Environment is ever authored against a bigger pool than a stage has and you
+# get SparkSettingsComputeExceedsPoolLimit, set this to e.g. "^semanticlink$" to skip just that
+# item; the proper fix is to lower its compute in the repo and commit from Fabric.
+exclude_item_name_regex = ""   # "" = publish every item; regex = skip matching display names
 
 # Remove items in the target workspace that are no longer in Git (orphans). Leave False
 # until you trust the deploy; True keeps the workspace exactly mirroring the repo.
@@ -277,11 +279,38 @@ else:
         _say(f"Cloned <b>{git_branch}</b> → <code>{repo_directory}</code>", "ok")
 
 # Cell 4b — (MERGED FROM NB_04) Generate parameter.yml on the fly from live Dev GUIDs.
-# Instead of hand-maintaining parameter.yml, build it here from the SAME source of truth
-# NB_04 uses: the Variable Library 'VL_CICD_Bindings' (workspace + 3 lakehouse Dev GUIDs)
-# plus name-resolution (NB_04's resolve_item_id) for the notebook/dataflow/semantic-model
-# Dev GUIDs the VL does not carry. fabric-cicd auto-detects the file we write here.
+# Instead of hand-maintaining parameter.yml, DISCOVER every item from the repo's
+# <DisplayName>.<ItemType> folders and resolve each one's Dev GUID BY NAME from the Dev
+# workspace via resolve_item_id. fabric-cicd auto-detects the file we write here.
 import yaml
+
+# --- DYNAMIC publish scope -----------------------------------------------------------------
+# Build item_type_in_scope FROM THE REPO at run time instead of a hardcoded list. A Fabric
+# source-format repo stores every item as a `<DisplayName>.<ItemType>` folder (e.g.
+# `NB_01_Seed_Bronze.Notebook`, `Gold_SM.SemanticModel`). We scan repo_directory for those
+# folders, take the suffix after the last dot, and keep only suffixes fabric-cicd supports.
+# Result: ONLY the item types actually committed in the repo are published — no Eventhouse,
+# Warehouse, KQL*, etc. iterations when those folders don't exist. (`Publishing Workspace
+# Folders` in fabric-cicd's log is just the folder hierarchy being mirrored, not an item type.)
+def _discover_item_types(repo_dir):
+    found = set()
+    for _n in os.listdir(repo_dir):
+        if os.path.isdir(os.path.join(repo_dir, _n)) and "." in _n:
+            _suffix = _n.rsplit(".", 1)[1]
+            if _suffix in _supported_item_types:
+                found.add(_suffix)
+    return found
+
+item_type_in_scope = sorted(_discover_item_types(repo_directory))
+# Trim the discovered set per the Cell 1 toggles:
+#   - drop Lakehouse unless include_lakehouses (avoids duplicate-lakehouse risk),
+#   - always drop VariableLibrary: nothing in the runtime pipeline consumes VL_CICD_Bindings
+#     (all bindings come from parameter.yml $items tokens), so it is never deployed.
+if not include_lakehouses:
+    item_type_in_scope = [t for t in item_type_in_scope if t != "Lakehouse"]
+item_type_in_scope = [t for t in item_type_in_scope if t != "VariableLibrary"]
+_say(f"Discovered <b>{len(item_type_in_scope)}</b> item type(s) in the repo → publishing "
+     f"<code>{', '.join(item_type_in_scope) or '(none)'}</code>.", "info")
 
 def resolve_item_id(ws_id, display_name, item_type):
     """NB_04's name->GUID resolver (GET-only version)."""
@@ -292,102 +321,77 @@ def resolve_item_id(ws_id, display_name, item_type):
         raise ValueError(f"{item_type} '{display_name}' not found in workspace {ws_id}. Present: {avail}")
     return m
 
-def _read_vl_dev_values(ws_id, vl_name_):
-    """Read NB_04's Variable Library Development value set from its item definition.
-    Development is the default set, so variables.json holds the Dev values; a
-    valueSets/Development.json override wins if present. Returns {VarName: value}; {} on any
-    issue (caller then falls back to name resolution for everything)."""
-    try:
-        import requests
-        vl_id = resolve_item_id(ws_id, vl_name_, "VariableLibrary")
-        token = notebookutils.credentials.getToken("https://api.fabric.microsoft.com")
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        r = requests.post(f"{_FABRIC_BASE}/workspaces/{ws_id}/items/{vl_id}/getDefinition", headers=headers)
-        if r.status_code == 202:                                  # long-running op -> poll
-            op = r.headers.get("Location")
-            for _ in range(30):
-                time.sleep(0.5)
-                p = requests.get(op, headers=headers)
-                st = (p.json() if p.text else {}).get("status")
-                if st == "Succeeded":
-                    r = requests.get(p.headers.get("Location") or op.rstrip("/") + "/result", headers=headers)
-                    break
-                if st == "Failed":
-                    return {}
-        parts = (r.json() if r.text else {}).get("definition", {}).get("parts", [])
-        decoded = {p["path"]: base64.b64decode(p["payload"]).decode("utf-8") for p in parts}
-        vals = {}
-        for path, text in decoded.items():                        # defaults (Development set)
-            if path.lower().endswith("variables.json"):
-                for v in json.loads(text).get("variables", []):
-                    if v.get("value"):
-                        vals.setdefault(v["name"], v["value"])
-        for path, text in decoded.items():                        # explicit Development overrides
-            if "development" in path.lower() and path.lower().endswith(".json") and "valueset" in path.lower():
-                ov = json.loads(text)
-                for o in ov.get("variableOverrides", ov.get("overrides", [])):
-                    if o.get("value"):
-                        vals[o["name"]] = o["value"]
-        return vals
-    except Exception as e:
-        _say(f"Variable Library '{vl_name_}' not read ({e}); resolving all Dev GUIDs by name.", "warn")
-        return {}
-
 if generate_parameter_yml:
-    dev_ws_id = resolve_workspace_id(dev_workspace_name)
-    vl_vals   = _read_vl_dev_values(dev_ws_id, vl_name)
+    dev_ws_id     = resolve_workspace_id(dev_workspace_name)
+    dev_workspace = dev_ws_id
 
-    def _dev_lh(var_key, lh_name):
-        """Prefer the VL's stored Dev lakehouse GUID; fall back to resolving by name."""
-        return vl_vals.get(var_key) or resolve_item_id(dev_ws_id, lh_name, "Lakehouse")
+    # DISCOVER every item from the repo's <DisplayName>.<ItemType> folders — nothing is
+    # hardcoded. repo_items maps {item_type: [display_name, ...]} for the types we reference.
+    repo_items = {}
+    for _n in os.listdir(repo_directory):
+        if os.path.isdir(os.path.join(repo_directory, _n)) and "." in _n:
+            _name, _, _suffix = _n.rpartition(".")
+            if _suffix in _supported_item_types:
+                repo_items.setdefault(_suffix, []).append(_name)
 
-    dev_workspace = vl_vals.get("WorkspaceId") or dev_ws_id
-    dev_bronze_lh = _dev_lh("BronzeLakehouseId", "Bronze_LH")
-    dev_silver_lh = _dev_lh("SilverLakehouseId", "Silver_LH")
-    dev_gold_lh   = _dev_lh("GoldLakehouseId",   "Gold_LH")
-
-    # Items the VL does NOT carry -> resolve by name from the Dev workspace (NB_04 concept).
-    dev_nb_ids = {n: resolve_item_id(dev_ws_id, n, "Notebook") for n in gen_notebook_names}
-    dev_df_id  = resolve_item_id(dev_ws_id, gen_dataflow_name, "Dataflow")
-    dev_sm_id  = resolve_item_id(dev_ws_id, gen_semantic_model, "SemanticModel")
+    def _dev_guid(itype, name):
+        """Dev GUID for a repo item resolved BY NAME; None if it isn't in Dev yet (harmless)."""
+        try:
+            return resolve_item_id(dev_ws_id, name, itype)
+        except ValueError:
+            return None
 
     def _repl(token):    # same token for every environment column fabric-cicd may select
         return {k: token for k in dict.fromkeys(["Development", "Production", environment])}
 
     find_replace = []
-    # 1. Dev workspace id -> target workspace id (global; fixes every activity workspaceId).
-    find_replace.append({"find_value": dev_workspace, "replace_value": _repl("$workspace.$id")})
-    # 2. Pipeline notebook references.
-    for n, gid in dev_nb_ids.items():
-        find_replace.append({"find_value": gid,
-                             "replace_value": _repl(f"$items.Notebook.{n}.$id"),
-                             "item_type": ["DataPipeline"]})
-    # 3. Pipeline dataflow reference.
-    find_replace.append({"find_value": dev_df_id,
-                         "replace_value": _repl(f"$items.Dataflow.{gen_dataflow_name}.$id"),
-                         "item_type": ["DataPipeline"]})
-    # 4. Pipeline SM-refresh datasetId.
-    find_replace.append({"find_value": dev_sm_id,
-                         "replace_value": _repl(f"$items.SemanticModel.{gen_semantic_model}.$id"),
-                         "item_type": ["DataPipeline"]})
-    # 5. DF_Gold_PA mashup SilverLakehouseId.
-    find_replace.append({"find_value": dev_silver_lh,
-                         "replace_value": _repl("$items.Lakehouse.Silver_LH.$id"),
-                         "item_type": ["Dataflow"]})
-    # 6. Notebook default-lakehouse bindings.
-    for lh_name, gid in (("Bronze_LH", dev_bronze_lh), ("Silver_LH", dev_silver_lh), ("Gold_LH", dev_gold_lh)):
-        find_replace.append({"find_value": gid,
-                             "replace_value": _repl(f"$items.Lakehouse.{lh_name}.$id"),
-                             "item_type": ["Notebook"]})
+    # 1. Dev workspace id -> target workspace id, on every in-scope type EXCEPT the SemanticModel.
+    #    This fixes the DataPipeline activity workspaceIds, the Notebook default-lakehouse
+    #    workspace id, and the Dataflow SilverWorkspaceId parameter — all of which embed the Dev
+    #    workspace GUID and are safe to translate. A Direct-Lake-on-OneLake SemanticModel is
+    #    EXCLUDED: its definition embeds BOTH the workspace and lakehouse GUID in one OneLake path;
+    #    rewriting only the workspace breaks the import ("Workspace Id should be consistent"), so
+    #    it is published self-consistent on Dev's lakehouse and rebound to this stage by Cell 6b.
+    _ws_rewrite_types = [t for t in item_type_in_scope if t != "SemanticModel"]
+    _rule1 = {"find_value": dev_workspace, "replace_value": _repl("$workspace.$id")}
+    if "SemanticModel" in item_type_in_scope and _ws_rewrite_types:
+        _rule1["item_type"] = _ws_rewrite_types    # scope to all-but-SemanticModel
+    find_replace.append(_rule1)
 
-    _hdr = ("# AUTO-GENERATED by NB_05_Deploy from VL_CICD_Bindings + name resolution.\n"
+    # 2. Pipeline activity references: EVERY Notebook / Dataflow / SemanticModel in the repo ->
+    #    its $items token, scoped to DataPipeline (PL_Refresh_Master calls each by its Dev GUID).
+    #    Discovered from the repo, so new pipeline items are picked up with no code change. A rule
+    #    whose Dev GUID appears in no pipeline is a harmless no-op.
+    for _itype in ("Notebook", "Dataflow", "SemanticModel"):
+        for _nm in sorted(repo_items.get(_itype, [])):
+            _gid = _dev_guid(_itype, _nm)
+            if _gid:
+                find_replace.append({"find_value": _gid,
+                                     "replace_value": _repl(f"$items.{_itype}.{_nm}.$id"),
+                                     "item_type": ["DataPipeline"]})
+
+    # 3. EVERY Lakehouse in the repo -> its $items token, for Notebooks AND the Dataflow. This
+    #    rebinds notebook default-lakehouse bindings AND DF_Gold_PA's mashup.pq, which references
+    #    lakehouses by GUID in two spots (the Silver SOURCE parameter and the inline DESTINATION
+    #    query). The Dataflow MUST be included: rule 1 only rewrites the WORKSPACE GUID, so without
+    #    these the destination lakehouseId stays the Dev GUID while its workspace is rewritten ->
+    #    the refresh fails with EntityNotFound. NOT applied to SemanticModel (Direct Lake, rebound
+    #    by Cell 6b) or DataPipeline.
+    for _nm in sorted(repo_items.get("Lakehouse", [])):
+        _gid = _dev_guid("Lakehouse", _nm)
+        if _gid:
+            find_replace.append({"find_value": _gid,
+                                 "replace_value": _repl(f"$items.Lakehouse.{_nm}.$id"),
+                                 "item_type": ["Notebook", "Dataflow"]})
+
+    _hdr = ("# AUTO-GENERATED by NB_05_Deploy from name resolution against the Dev workspace.\n"
             "# Do NOT edit by hand — regenerated on every deploy. find_value = Dev GUID,\n"
             "# replace_value = fabric-cicd dynamic token resolved against the target stage.\n")
     _param_path = os.path.join(repo_directory, "parameter.yml")
     with open(_param_path, "w", encoding="utf-8") as f:
         f.write(_hdr)
         yaml.safe_dump({"find_replace": find_replace}, f, sort_keys=False, default_flow_style=False)
-    _say(f"Generated <code>parameter.yml</code> from <b>{vl_name}</b> + name resolution "
+    _say(f"Generated <code>parameter.yml</code> from name resolution "
          f"({len(find_replace)} rules; Dev workspace <b>{dev_workspace_name}</b>).", "ok")
 else:
     _say("parameter.yml generation skipped (generate_parameter_yml=False) — using the "
@@ -419,23 +423,50 @@ if remove_orphans:
 else:
     _say("Orphan cleanup skipped (remove_orphans=False).", "info")
 
-# Cell 6b — (MERGED FROM NB_04 Cell 10) Re-point Gold_SM Direct Lake on OneLake to THIS
-# stage's Gold_LH. fabric-cicd publishes the model with Dev's connection baked in; a
-# data-source deployment rule is NOT supported for Direct Lake on OneLake, so we regenerate
-# the connection in code against the target workspace. use_sql_endpoint=False = Direct Lake
-# OVER ONELAKE (not the SQL endpoint). Requires semantic-link-labs and ownership of Gold_SM.
+# Cell 6b — Re-point every Direct-Lake-on-OneLake semantic model to THIS stage's matching
+# lakehouse. Each SemanticModel is DISCOVERED from the repo; its OneLake source path
+# (.../<workspaceGuid>/<lakehouseGuid>) is read from the model definition, the Dev lakehouse
+# GUID is translated back to a name, and the model is rebound to the SAME-named lakehouse in the
+# target stage. parameter.yml deliberately does NOT rewrite the model's GUIDs (rule 1 excludes
+# SemanticModel) because a find_replace cannot safely rebind a Direct Lake expression and
+# fabric-cicd has no deployment rule for it — so it is done in code here. use_sql_endpoint=False
+# = Direct Lake OVER ONELAKE (not the SQL endpoint). Needs semantic-link-labs + model ownership.
 if rebind_direct_lake:
+    import re, glob
     from sempy_labs import directlake
-    _target_gold_lh = resolve_item_id(target_workspace_id, "Gold_LH", "Lakehouse")
-    directlake.update_direct_lake_model_connection(
-        dataset=gen_semantic_model,
-        workspace=target_workspace_id,
-        source=_target_gold_lh,
-        source_type="Lakehouse",
-        source_workspace=target_workspace_id,
-        use_sql_endpoint=False,
-    )
-    _say(f"<b>{gen_semantic_model}</b>: Direct Lake on OneLake re-pointed to this stage's Gold_LH.", "ok")
+
+    # Dev lakehouse id -> name, to translate the GUID inside each Direct Lake path to a name.
+    _dev_ws_dl = resolve_workspace_id(dev_workspace_name)
+    _dev_lh_by_id = {i["id"]: i["displayName"]
+                     for i in _fabric_get(f"/workspaces/{_dev_ws_dl}/items?type=Lakehouse")["value"]}
+
+    _rebound = []
+    for _sm_dir in sorted(glob.glob(os.path.join(repo_directory, "*.SemanticModel"))):
+        _sm_name = os.path.basename(_sm_dir).rsplit(".", 1)[0]
+        _text = ""
+        for _f in glob.glob(os.path.join(_sm_dir, "**", "*.tmdl"), recursive=True):
+            with open(_f, encoding="utf-8") as _fh:
+                _text += _fh.read() + "\n"
+        # Direct Lake on OneLake source path: .../<workspaceGuid>/<lakehouseGuid>
+        _m = re.search(r"onelake\.dfs\.fabric\.microsoft\.com/[0-9a-fA-F-]{36}/([0-9a-fA-F-]{36})", _text)
+        if not _m:
+            continue                                   # not Direct Lake on OneLake -> nothing to do
+        _lh_name = _dev_lh_by_id.get(_m.group(1))
+        if not _lh_name:
+            _say(f"<b>{_sm_name}</b>: Direct Lake lakehouse <code>{_m.group(1)}</code> not found "
+                 f"by name in Dev — skipping rebind.", "warn")
+            continue
+        directlake.update_direct_lake_model_connection(
+            dataset=_sm_name, workspace=target_workspace_id,
+            source=resolve_item_id(target_workspace_id, _lh_name, "Lakehouse"),
+            source_type="Lakehouse", source_workspace=target_workspace_id,
+            use_sql_endpoint=False,
+        )
+        _rebound.append(f"{_sm_name} → {_lh_name}")
+    if _rebound:
+        _say("Direct Lake re-pointed to this stage: <b>" + "</b>, <b>".join(_rebound) + "</b>.", "ok")
+    else:
+        _say("No Direct-Lake-on-OneLake semantic models found in the repo to rebind.", "info")
 else:
     _say("Direct Lake rebind skipped (rebind_direct_lake=False).", "info")
 
@@ -443,6 +474,11 @@ else:
 # Only remove the clone we created — NEVER delete a local/auto-detected working tree.
 if _clone_dir:
     shutil.rmtree(_clone_dir, ignore_errors=True)
+# Precompute summary cells as plain strings — Fabric's Python (<3.12) forbids a backslash
+# inside an f-string expression, so no apostrophes/escapes may appear in the {...} parts below.
+_param_summary = "generated from name resolution" if generate_parameter_yml else "checked-in file used as-is"
+_dl_summary    = "models re-pointed to this stage's lakehouse" if rebind_direct_lake else "left as published (rebind off)"
+_items_summary = ", ".join(item_type_in_scope)
 display(HTML(
     '<div style="font-family:Segoe UI,system-ui,sans-serif;border:1px solid #d0d7de;'
     'border-radius:8px;padding:14px 18px;max-width:680px">'
@@ -450,17 +486,17 @@ display(HTML(
     f'<table style="border-collapse:collapse;font-size:13px">'
     f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">Target workspace</td><td><b>{target_workspace_name}</b></td></tr>'
     f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">Environment</td><td><b>{environment}</b></td></tr>'
-    f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">Items in scope</td><td>{", ".join(item_type_in_scope)}</td></tr>'
-    f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">Pipeline refs</td><td>notebooks / dataflow / Gold_SM re-pointed to this stage</td></tr>'
-    f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">parameter.yml</td><td>{"generated from " + vl_name + " + name resolution" if generate_parameter_yml else "checked-in file used as-is"}</td></tr>'
-    f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">Direct Lake</td><td>{"Gold_SM re-pointed to this stage Gold_LH" if rebind_direct_lake else "left as published (rebind off)"}</td></tr>'
+    f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">Items in scope</td><td>{_items_summary}</td></tr>'
+    f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">Pipeline refs</td><td>notebooks / dataflows / semantic models re-pointed to this stage</td></tr>'
+    f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">parameter.yml</td><td>{_param_summary}</td></tr>'
+    f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">Direct Lake</td><td>{_dl_summary}</td></tr>'
+    f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">Lakehouses</td><td>deployed from repo (paired by logical id; updated only on change)</td></tr>'
     '</table>'
     '<div style="margin-top:10px;font-size:12px;color:#57606a">The data pipeline\'s semantic-model '
-    'refresh activity now targets this stage\'s Gold_SM. Connections (gateway / Direct Lake) are '
+    'refresh activities now target this stage\'s models. Connections (gateway / Direct Lake) are '
     'tenant-level and are NOT auto-mapped — set them once per stage.</div>'
     '</div>'
 ))
-
 
 # METADATA ********************
 
