@@ -221,15 +221,20 @@ print(f"✅ Gold_LH.field_kpi_facts: {df_kpi_facts.count()} rows")
 #      write, under the same identity that wrote the tables — so the model is authoritative the moment
 #      this notebook finishes and never depends on a later manual/scheduled refresh hitting a stale frame.
 #
-# THE REMAINING FAILURE MODE — A TRANSIENT POST-WRITE FRAMING RACE (why the refresh is RETRIED below):
-#   In the seconds right after the Spark Delta commit, the Direct Lake framing operation can
-#   INTERMITTENTLY fail to resolve the just-written table version (usually field_kpi_facts, the
-#   freshest write) and returns 0xC14700DF "source tables ... do not exist or access denied". Despite
-#   that wording this is NOT an ownership/permission problem: the SAME identity with the SAME
-#   permissions succeeds on a retry moments later (observed: a failing run reran ~2 min later with no
-#   changes and refreshed cleanly). A genuine owner-access problem is PERMANENT and could never
-#   self-heal on retry. So the robust fix is not "take over the model" — it is to RETRY the reframe
-#   with backoff so the pipeline rides out the brief propagation window instead of failing the run.
+# THE FAILURE MODE — METADATA-SYNC LAG WHEN TABLES ARE CREATED FROM SCRATCH (handled by the RETRY
+# LOOP with a LONG window). The first time this runs in a stage (e.g. a fresh fabric-cicd deploy to
+# ws-CICD-PROD) the Gold_LH tables do not exist yet, so _write_gold() CREATES them from scratch. A
+# brand-new Delta table object has to be registered and synced into the lakehouse/OneLake metadata
+# before Direct Lake framing can resolve it, and that first-creation sync can take MANY MINUTES
+# (observed ~10 min, sometimes longer for the freshest table, usually field_kpi_facts). Until the sync
+# completes, framing returns 0xC14700DF "source tables ... do not exist or access denied" — the wording
+# mentions access, but this is NOT a permission/ownership problem: the SAME identity with the SAME
+# permissions succeeds once the metadata has caught up. (Proven repeatedly: a failing run reruns
+# cleanly minutes later with zero changes; a genuine owner-access error would be permanent.) So the fix
+# is to RETRY the reframe with backoff over a window LONG ENOUGH to outlast the create-from-scratch
+# sync, instead of taking over ownership or failing the run. On STEADY-STATE runs the tables already
+# exist and are overwritten DATA-ONLY (identity preserved), so there is nothing to re-register and the
+# first attempt normally succeeds immediately.
 import sempy_labs as labs
 import notebookutils
 import time
@@ -250,18 +255,18 @@ for _tbl in _EXPECTED_TABLES:
 # ── Refresh Gold_SM HERE, under the identity that just wrote the tables ──────────────────────
 # This is the authoritative guarantee (see the cell header). Gold_SM is Direct Lake ON ONELAKE, so
 # it frames the Delta tables straight from OneLake; a FULL refresh reframes every Direct Lake
-# partition and makes the model pick up the just-recreated field_kpi_facts (and the other tables)
-# atomically. Doing it from the notebook — same identity, immediately after the write — minimizes the
-# reframe race, and the retry loop below absorbs the brief residual window when framing can't yet
-# resolve the freshest write. NOTE: this only TRIGGERS a refresh; it does NOT change the model, its
-# measures, the calc table, or the report.
-# Retry the full reframe with backoff to absorb the transient post-write framing race described in the
-# header. Each attempt is one enhanced-refresh call; 0xC14700DF early on is treated as RETRYABLE (the
-# new Delta version just needs a moment to become resolvable). A real, persistent access/ownership
-# error simply exhausts the attempts and then raises with accurate guidance.
+# partition and makes the model pick up the just-written field_kpi_facts (and the other tables)
+# atomically. We RETRY with backoff over a LONG window so that on a first run — where the tables are
+# CREATED FROM SCRATCH and need a slow metadata sync before framing can resolve them (see header) —
+# the loop simply waits the sync out instead of failing. NOTE: this only TRIGGERS a refresh; it does
+# NOT change the model, its measures, the calc table, or the report.
 _SEMANTIC_MODEL = "Gold_SM"
-_MAX_ATTEMPTS   = 4          # total tries
-_BACKOFF_SECS   = 60         # wait between tries (transient window is ~1-2 min in practice)
+# Window sized to outlast the create-from-scratch metadata sync (observed ~10 min, allow margin):
+# 15 attempts × 120s ≈ 28 min of total wait. Steady-state runs (tables already exist) succeed on
+# attempt 1, so this big ceiling only ever costs time on the very first run in a new stage.
+_MAX_ATTEMPTS   = 15         # total tries
+_BACKOFF_SECS   = 120        # wait between tries (create-from-scratch sync can run ~10 min+)
+
 print(f"\n── Refreshing Direct Lake (on OneLake) model '{_SEMANTIC_MODEL}' (full reframe) ──")
 _refreshed = False
 for _attempt in range(1, _MAX_ATTEMPTS + 1):
@@ -275,24 +280,25 @@ for _attempt in range(1, _MAX_ATTEMPTS + 1):
         break
     except Exception as _e:
         _msg = str(_e)
-        # A just-written table not yet resolvable by framing surfaces as this text. It is transient.
+        # A newly-created table not yet synced into metadata surfaces as this text. It is transient
+        # and clears once the create-from-scratch sync completes — so keep retrying.
         _transient = ("0xC14700DF" in _msg) or ("do not exist or access" in _msg.lower())
         if _transient and _attempt < _MAX_ATTEMPTS:
-            print(f"⏳ Attempt {_attempt}/{_MAX_ATTEMPTS} hit the transient post-write framing race; "
-                  f"retrying in {_BACKOFF_SECS}s...")
+            print(f"⏳ Attempt {_attempt}/{_MAX_ATTEMPTS}: tables still syncing into metadata after "
+                  f"create-from-scratch; retrying in {_BACKOFF_SECS}s "
+                  f"(elapsed wait so far ~{(_attempt - 1) * _BACKOFF_SECS // 60} min)...")
             time.sleep(_BACKOFF_SECS)
             continue
-        # Out of retries, or an error that is not the transient framing race — surface it precisely.
+        # Out of retries, or an error that is not the metadata-sync lag — surface it precisely.
         raise Exception(
             f"Refresh of Direct Lake (on OneLake) model '{_SEMANTIC_MODEL}' FAILED after "
-            f"{_attempt} attempt(s): {_e}\n"
-            f"  • If this says a table 'does not exist or access denied' (0xC14700DF) and PERSISTS across\n"
-            f"    all retries, it is a genuine owner-access problem: the identity that OWNS '{_SEMANTIC_MODEL}'\n"
-            f"    must have READ access to Gold_LH (Direct Lake checks the OWNER's permission when framing,\n"
-            f"    regardless of who runs the refresh). Make the model owner == the data writer, e.g. in code\n"
-            f"    via sempy_labs.takeover_item_ownership('{_SEMANTIC_MODEL}', type='SemanticModel', workspace=_ws_id).\n"
-            f"  • If it only failed transiently and cleared on a later run, no action is needed — increase\n"
-            f"    _MAX_ATTEMPTS/_BACKOFF_SECS above to ride out a longer propagation window."
+            f"{_attempt} attempt(s) (~{((_attempt - 1) * _BACKOFF_SECS) // 60} min of waiting): {_e}\n"
+            f"  • 0xC14700DF / 'do not exist or access' here means the create-from-scratch metadata sync\n"
+            f"    still had not completed within the retry window. This is NOT a permission/ownership\n"
+            f"    issue — the same identity refreshes cleanly once the sync finishes. Raise _MAX_ATTEMPTS\n"
+            f"    and/or _BACKOFF_SECS above to extend the window if a stage's first-run sync is slower.\n"
+            f"  • Re-running this notebook (or the pipeline) after a few minutes will also succeed, since\n"
+            f"    by then the tables are fully registered."
         ) from _e
 
 print("🏆 Gold aggregation COMPLETE — tables written, Gold_SM refreshed")

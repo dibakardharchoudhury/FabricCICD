@@ -14,7 +14,7 @@ Bronze_LH ─ NB_01_Seed_Bronze        (inline sample data — no external sourc
               └► Gold_SM (Direct Lake) ─► Gold_Dashboard
 ```
 
-`PL_Refresh_Master` runs the whole chain in order and refreshes `Gold_SM` at the end.
+`PL_Refresh_Master` runs the whole chain in order; `NB_03_Aggregate_Gold` refreshes `Gold_SM` right after it writes the Gold tables (the pipeline has no separate model-refresh activity).
 
 ## Repo layout
 
@@ -23,7 +23,7 @@ Bronze_LH ─ NB_01_Seed_Bronze        (inline sample data — no external sourc
 | `Bronze_LH` / `Silver_LH` / `Gold_LH` `.Lakehouse/` | Medallion lakehouses |
 | `NB_01_Seed_Bronze` … `NB_03_Aggregate_Gold` `.Notebook/` | Transform notebooks |
 | `DF_Gold_PA.Dataflow/` | Builds Gold `production_daily` (Dataflow Gen2) |
-| `PL_Refresh_Master.DataPipeline/` | Orchestrates Bronze→Gold + model refresh |
+| `PL_Refresh_Master.DataPipeline/` | Orchestrates Bronze→Gold (NB_03 refreshes the model) |
 | `Gold_SM.SemanticModel/` | Direct Lake (on OneLake) semantic model |
 | `Gold_Dashboard.Report/` | Report built on `Gold_SM` |
 | `semanticlink.Environment/` | Spark env (pins `fabric-cicd`, `semantic-link-labs`) |
@@ -55,7 +55,7 @@ workspace and **commit from Fabric**.
 2. **Run all cells.** `NB_04_Deploy` publishes every item, rewrites all Dev GUIDs to the
    target stage, and rebinds the Direct Lake model to the target's `Gold_LH`.
 3. In the target workspace, run **`PL_Refresh_Master`** once. Git never carries table data,
-   so this (re)creates the tables, loads data, and refreshes `Gold_SM`.
+   so this (re)creates the tables, loads data, and `NB_03` refreshes `Gold_SM`.
 
 That's it — `Gold_Dashboard` in the target now shows live data.
 

@@ -28,14 +28,16 @@
 #   already pointed at THIS stage instead of Dev.
 #
 # What this fixes (your problem): the activities in PL_Refresh_Master reference the
-#   notebooks/dataflow/semantic model by their DEV workspaceId + DEV item GUIDs. After a
-#   plain copy they still call the Dev items cross-workspace. parameter.yml swaps:
+#   notebooks/dataflow by their DEV workspaceId + DEV item GUIDs. After a plain copy they
+#   still call the Dev items cross-workspace. parameter.yml swaps:
 #     - the Dev workspaceId            -> $workspace.$id            (this stage)
 #     - each Dev notebookId            -> $items.Notebook.<name>.$id
 #     - the Dev dataflowId             -> $items.Dataflow.DF_Gold_PA.$id
-#     - the SM-refresh datasetId       -> $items.SemanticModel.Gold_SM.$id
-#   The semantic-model refresh STAYS as an activity in the pipeline — fabric-cicd just
-#   makes it point at this stage's Gold_SM, it does not run the refresh itself.
+#   The pipeline no longer contains a semantic-model refresh activity (it was removed) —
+#   Gold_SM is refreshed inside NB_03's PySpark node right after the Gold tables are written,
+#   so there is no datasetId in the pipeline left to re-point. The SemanticModel is still
+#   DEPLOYED and Direct-Lake-rebound to this stage's lakehouse (Cell 6b), just not refreshed
+#   from the pipeline.
 #
 # IMPORTANT — repository format:
 #   fabric-cicd reads the FABRIC GIT SOURCE FORMAT (item folders like
@@ -360,10 +362,12 @@ if generate_parameter_yml:
         _rule1["item_type"] = _ws_rewrite_types    # scope to all-but-SemanticModel
     find_replace.append(_rule1)
 
-    # 2. Pipeline activity references: EVERY Notebook / Dataflow / SemanticModel in the repo ->
-    #    its $items token, scoped to DataPipeline (PL_Refresh_Master calls each by its Dev GUID).
-    #    Discovered from the repo, so new pipeline items are picked up with no code change. A rule
-    #    whose Dev GUID appears in no pipeline is a harmless no-op.
+    # 2. Pipeline activity references: EVERY Notebook / Dataflow in the repo -> its $items token,
+    #    scoped to DataPipeline (PL_Refresh_Master calls each by its Dev GUID). SemanticModel is
+    #    still scanned for forward-compat (a future pipeline could add a refresh activity); since
+    #    the pipeline currently has NO semantic-model refresh, that rule simply finds nothing and
+    #    is a harmless no-op. Discovered from the repo, so new pipeline items are picked up with no
+    #    code change.
     for _itype in ("Notebook", "Dataflow", "SemanticModel"):
         for _nm in sorted(repo_items.get(_itype, [])):
             _gid = _dev_guid(_itype, _nm)
