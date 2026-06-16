@@ -526,7 +526,7 @@ display(HTML(
 # ran in this session. The bootstrap below defines everything it needs (_FABRIC_BASE,
 # _fabric_get, _say, target_workspace_name, target_workspace_id) only if they are missing —
 # which is why running just this cell no longer raises NameError: '_fabric_get' is not defined.
-confirm_delete_workspace = ""        # set to target_workspace_name (e.g. "ws-CICD-PROD") to actually delete
+confirm_delete_workspace = "ws-CICD-PROD"        # set to target_workspace_name (e.g. "ws-CICD-PROD") to actually delete
 
 # Which workspace to wipe. Re-declared here so the cell stands alone; edit if you ran nothing else.
 target_workspace_name = globals().get("target_workspace_name", "ws-CICD-PROD")
@@ -616,5 +616,7 @@ else:
 
 # META {
 # META   "language": "python",
-# META   "language_group": "synapse_pyspark"
+# META   "language_group": "synapse_pyspark",
+# META   "frozen": true,
+# META   "editable": false
 # META }
