@@ -1,21 +1,20 @@
 # Microsoft Fabric CI/CD — Medallion Demo
 
-A Medallion (Bronze → Silver → Gold) lakehouse promoted between Fabric workspaces
+A Bronze → Silver → Gold lakehouse that is promoted between Fabric workspaces
 **entirely from code** with [fabric-cicd](https://microsoft.github.io/fabric-cicd/).
-One notebook — `NB_04_Deploy` — publishes every item in this Git repo into a target
-workspace and rebinds all cross-workspace references, replacing the Fabric Deployment
-Pipeline and every manual binding fix.
+One notebook — `NB_04_Deploy` — publishes every item in this repo into a target
+workspace and rebinds all cross-workspace references. No manual clicks, no Deployment Pipeline.
 
-## Architecture
+## What's in the pipeline
 
 ```
-Bronze_LH  ← NB_01_Seed_Bronze            (inline sample data, no external source)
-   └► Silver_LH ← NB_02_Transform_Silver
-         └► Gold_LH ← DF_Gold_PA (production_daily) + NB_03_Aggregate_Gold
-               └► Gold_SM (Direct Lake) ► Gold_Dashboard
+Bronze_LH ─ NB_01_Seed_Bronze        (inline sample data — no external source)
+   └► Silver_LH ─ NB_02_Transform_Silver
+        └► Gold_LH ─ DF_Gold_PA → NB_03_Aggregate_Gold
+              └► Gold_SM (Direct Lake) ─► Gold_Dashboard
 ```
 
-`PL_Refresh_Master` runs the whole chain in order.
+`PL_Refresh_Master` runs the whole chain in order and refreshes `Gold_SM` at the end.
 
 ## Repo layout
 
@@ -23,59 +22,57 @@ Bronze_LH  ← NB_01_Seed_Bronze            (inline sample data, no external sou
 | --- | --- |
 | `Bronze_LH` / `Silver_LH` / `Gold_LH` `.Lakehouse/` | Medallion lakehouses |
 | `NB_01_Seed_Bronze` … `NB_03_Aggregate_Gold` `.Notebook/` | Transform notebooks |
-| `DF_Gold_PA.Dataflow/` | Gold `production_daily` Dataflow Gen2 |
-| `PL_Refresh_Master.DataPipeline/` | Orchestrates the Bronze→Gold run |
+| `DF_Gold_PA.Dataflow/` | Builds Gold `production_daily` (Dataflow Gen2) |
+| `PL_Refresh_Master.DataPipeline/` | Orchestrates Bronze→Gold + model refresh |
 | `Gold_SM.SemanticModel/` | Direct Lake (on OneLake) semantic model |
-| `Gold_Dashboard.Report/` | Report over `Gold_SM` |
-| `semanticlink.Environment/` | Spark environment (pins `fabric-cicd`, `semantic-link-labs`) |
-| `NB_04_Deploy.Notebook/` | **The deploy tool** — publishes everything above to a target workspace |
+| `Gold_Dashboard.Report/` | Report built on `Gold_SM` |
+| `semanticlink.Environment/` | Spark env (pins `fabric-cicd`, `semantic-link-labs`) |
+| `NB_04_Deploy.Notebook/` | **The deploy tool** — publishes everything above to a stage |
 
-All items are in **Fabric Git source format** — they land here when you Git-connect a
+Every item is in **Fabric Git source format** — they appear here when you Git-connect a
 workspace and **commit from Fabric**.
 
-## How deployment works
+## One-time setup
 
-`NB_04_Deploy` does three things in one run:
-
-1. **Discovers** every item in this repo and resolves its Dev GUIDs by name.
-2. **Generates `parameter.yml`** so fabric-cicd rewrites every Dev workspace / lakehouse /
-   item GUID to the **target** stage as it publishes.
-3. **Publishes** all items into the target workspace, then **rebinds** the Direct Lake
-   semantic model to the target's `Gold_LH`.
-
-Nothing is hardcoded — add an item to the repo and it is picked up automatically.
+1. Create a **Dev** workspace and **Git-connect** it to this repo.
+2. Build the items in Dev (or sync them from this repo), then **commit from Fabric** so the
+   repo holds the source format.
+3. Create a **target** workspace for each stage (e.g. `ws-CICD-PROD`). It can be empty —
+   `NB_04_Deploy` creates the lakehouse shells.
+4. The identity running `NB_04_Deploy` must be **Admin/Member on both workspaces** and
+   **own `Gold_SM`** (required to rebind Direct Lake).
+5. *(Only when running inside Fabric)* store a repo-scoped **GitHub PAT** in **Azure Key Vault**
+   so the Spark node can clone the repo. Not needed locally or in CI.
 
 ## Deploy to a stage
 
-**Prerequisites**
-
-- A source ("Dev") workspace, Git-connected to this repo, with all items built and committed.
-- A target workspace (e.g. `ws-CICD-PROD`) — it can be empty; NB_04 creates the lakehouse shells too.
-- The identity running NB_04 is **Admin/Member on both workspaces** and **owns `Gold_SM`**
-  (required to rebind Direct Lake).
-- Running inside Fabric only: an **Azure Key Vault** secret holding a repo-scoped **GitHub PAT**
-  (the Spark node clones the repo). Not needed when running locally / in CI.
-
-**Steps**
-
-1. Open `NB_04_Deploy` in a Fabric workspace (it deploys from the repo, including itself).
-2. Set the **parameters** cell:
+1. Open `NB_04_Deploy` and set the **parameters** cell:
    - `target_workspace_name` — the stage to deploy into.
-   - `environment` — your stage label, e.g. `"Production"`.
+   - `environment` — the stage label, e.g. `"Production"`.
    - `dev_workspace_name` — the source workspace whose GUIDs are translated.
-   - Running in Fabric: set `git_repo_url`, `key_vault_url`, and `git_pat_secret`
-     (a Key Vault–backed GitHub PAT).
-   - Running locally / in CI: leave `local_repo_path = ""` to auto-detect the checked-out repo.
-3. **Run all cells.** NB_04 publishes every item, repoints references to the target stage,
-   and rebinds Direct Lake.
-4. In the target workspace, run `PL_Refresh_Master` once to create tables and load data
-   (Git never carries lakehouse table data), then refresh `Gold_SM`.
+   - In Fabric: also set `git_repo_url`, `key_vault_url`, `git_pat_secret`.
+   - Local / CI: leave `local_repo_path = ""` to auto-detect the checked-out repo.
+2. **Run all cells.** `NB_04_Deploy` publishes every item, rewrites all Dev GUIDs to the
+   target stage, and rebinds the Direct Lake model to the target's `Gold_LH`.
+3. In the target workspace, run **`PL_Refresh_Master`** once. Git never carries table data,
+   so this (re)creates the tables, loads data, and refreshes `Gold_SM`.
 
-## Make a change (the CI/CD loop)
+That's it — `Gold_Dashboard` in the target now shows live data.
 
-1. Edit an item in **Dev** (e.g. uncomment the `gor_ratio` KPI in `NB_02_Transform_Silver`).
+## What NB_04 does
+
+1. **Discovers** every item in the repo and resolves its Dev GUIDs by name.
+2. **Generates `parameter.yml`** so fabric-cicd rewrites each Dev workspace/lakehouse/item
+   GUID to the target stage as it publishes.
+3. **Publishes** all items, then **rebinds** the Direct Lake model in code.
+
+Nothing is hardcoded — add an item to the repo and it is picked up automatically.
+
+## The change loop
+
+1. Edit an item in **Dev**.
 2. **Commit from Fabric** → push to this repo.
-3. Re-run `NB_04_Deploy` against the target stage — only changed items are updated.
+3. Re-run `NB_04_Deploy` against the stage — only changed items are updated.
 
 ## Key NB_04 parameters
 
@@ -85,15 +82,15 @@ Nothing is hardcoded — add an item to the repo and it is picked up automatical
 | `environment` | `Production` | Stage label used by `parameter.yml` |
 | `dev_workspace_name` | `ws-CICD-DevTest` | Source workspace (GUIDs → tokens) |
 | `generate_parameter_yml` | `True` | Auto-build `parameter.yml` from the repo |
-| `rebind_direct_lake` | `True` | Re-point Direct Lake models to the target's lakehouse |
+| `rebind_direct_lake` | `True` | Re-point Direct Lake models to the target lakehouse |
 | `include_lakehouses` | `True` | Deploy lakehouses from the repo |
 | `remove_orphans` | `False` | Delete target items no longer in Git |
 
-## Notes
+## Good to know
 
-- **Lakehouse tables aren't in Git** — only the lakehouse container is. After a deploy,
-  run `PL_Refresh_Master` to (re)create tables and load data in the target.
-- **Direct Lake on OneLake** can't be rebound by a deployment rule, so NB_04 does it in
+- **Table data isn't in Git** — only the lakehouse container is. Always run
+  `PL_Refresh_Master` after a deploy.
+- **Direct Lake on OneLake** can't be rebound by a deployment rule, so `NB_04` does it in
   code (needs `semantic-link-labs` and ownership of the model).
 - **`parameter.yml` is generated at deploy time** and not checked in — keep
   `generate_parameter_yml = True`.
