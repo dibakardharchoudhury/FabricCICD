@@ -192,7 +192,29 @@ _sync = labs.refresh_sql_endpoint_metadata(
     item=_lh_id, type="Lakehouse", workspace=_ws_id,
     timeout_unit="Minutes", timeout_value=5,
 )
-print(_sync)
+
+# Pretty-print just the columns that matter, one aligned row per table, instead of dumping the
+# raw wide DataFrame. "Success" = re-synced this run; "NotRun" = already current (also healthy).
+def _col(df, *names):
+    for _n in names:
+        if hasattr(df, "columns") and _n in df.columns:
+            return _n
+    return None
+
+_name_col   = _col(_sync, "Table Name", "TableName", "table_name", "Name")
+_status_col = _col(_sync, "Status", "status")
+if _name_col:
+    _icon = {"Success": "✓", "NotRun": "•", "Failure": "✗", "Failed": "✗"}
+    _rows = []
+    for _, _r in _sync.iterrows():
+        _nm  = str(_r[_name_col]).split(".")[-1]
+        _st  = str(_r[_status_col]) if _status_col else ""
+        _rows.append((_icon.get(_st, "·"), _nm, _st))
+    _w = max((len(_n) for _, _n, _ in _rows), default=10)
+    for _ic, _nm, _st in sorted(_rows, key=lambda x: x[1]):
+        print(f"   {_ic} {_nm.ljust(_w)}  {_st}")
+else:
+    print(_sync)
 
 # Defensive check: if the status DataFrame exposes a table-name column, confirm every expected Gold
 # table is present in the synced metadata before allowing the downstream refresh to proceed. The
