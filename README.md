@@ -37,12 +37,12 @@ Items are in **Fabric Git source format** — produced when you Git-connect a wo
 
 1. **Fork** this repo and **Git-connect** your **Dev** workspace to your fork (commit to your fork, not upstream).
 2. Build the items in Dev (or sync from your fork).
-3. **Publish the `semanticlink` Environment** (one-time per workspace). A new Environment is
-   unpublished until built, so `semantic-link-labs` / `sempy_labs` is unavailable and
+3. **Publish the `semanticlink` Environment in Dev** (one-time). Git sync brings the Environment
+   *definition* but doesn't build it, so `semantic-link-labs` / `sempy_labs` is unavailable and
    `NB_03_Aggregate_Gold` fails with `ModuleNotFoundError: No module named 'sempy_labs'`. Open
    **`semanticlink` → Publish** and wait (~10–20 min). Re-publish only when its libraries change.
-4. **Sign in to the `DF_Gold_PA` destination** (one-time per stage) — fabric-cicd can't bind a
-   Dataflow Gen2 connection, and it differs per tenant. Open **`DF_Gold_PA` → Edit →
+   *(On deploy targets, `NB_04_Deploy` publishes the Environment for you — see step 5.)*
+4. **Sign in to the `DF_Gold_PA` destination** (one-time per stage). Open **`DF_Gold_PA` → Edit →
    `GoldProductionDaily` → Data destination**, confirm it points at the stage's `Gold_LH` /
    `production_daily` (Replace), **sign in**, **Save**.
 5. **Validate in Dev, then deploy to Prod:**
@@ -50,8 +50,8 @@ Items are in **Fabric Git source format** — produced when you Git-connect a wo
    - Create an empty **Prod** workspace (e.g. `ws-CICD-PROD`); `NB_04_Deploy` creates the lakehouse shells.
    - Open **`NB_04_Deploy`**, set the **parameters** cell (`target_workspace_name`, `environment`,
      `dev_workspace_name`; in Fabric also `git_repo_url`, `key_vault_url`, `git_pat_secret`; local / CI
-     leave `local_repo_path = ""`), and **Run all cells**.
-   - **Publish the Environment in Prod** (once per stage).
+     leave `local_repo_path = ""`), and **Run all cells**. fabric-cicd deploys **and publishes** the
+     `semanticlink` Environment (waiting for the build), so the first run takes ~20 min.
    - Run **`PL_Refresh_Master`** in Prod once — Git carries no table data, so this loads the tables and
      refreshes `Gold_SM`. `Gold_Dashboard` now shows live data.
 6. The identity running `NB_04_Deploy` must be **Admin/Member on both workspaces** (enough to modify `Gold_SM` — no separate ownership).
@@ -83,7 +83,8 @@ Edit in **Dev** → **commit from Fabric** → re-run `NB_04_Deploy` (only chang
 ## Good to know
 
 - **Table data isn't in Git** — only the lakehouse container. Always run `PL_Refresh_Master` after a deploy.
-- **A new Environment must be published per stage** before the pipeline runs (Steps 3 / 5).
+- **`NB_04_Deploy` publishes the Environment for you** on deploy targets (fabric-cicd builds it and
+  waits, ~20 min on first run). Only **Git-synced** workspaces (e.g. Dev) need a manual Publish (Step 3).
 - **Direct Lake on OneLake** can't be rebound by a deployment rule, so `NB_04` does it in code (`semantic-link-labs`; Admin/Member suffices).
 - **The `DF_Gold_PA` connection isn't deployed** — needs a **one-time sign-in per stage** (Step 4).
 - **`parameter.yml` is generated at deploy time**, not checked in — keep `generate_parameter_yml = True`.
@@ -113,7 +114,9 @@ Steady-state runs overwrite data only and refresh first try.
 
 ### `NB_03_Aggregate_Gold` fails: `ModuleNotFoundError: No module named 'sempy_labs'`
 
-The `semanticlink` Environment is deployed but **unpublished**, so `semantic-link-labs` isn't
-installed on the Spark pool. Fix (one-time per stage): **`semanticlink` \u2192 Publish** (~10\u201320 min),
-then re-run `PL_Refresh_Master`. Re-publish only when libraries change.
+The `semanticlink` Environment is present but **unpublished**, so `semantic-link-labs` isn't installed
+on the Spark pool. This happens when the Environment arrived via **Git sync** (Git brings the
+definition but doesn't build it) — typically the Dev workspace. Fix: **`semanticlink` → Publish**
+(~10–20 min), then re-run `PL_Refresh_Master`. Re-publish only when libraries change.
+*(Deploy targets don't hit this — `NB_04_Deploy` publishes the Environment during deploy.)*
 
