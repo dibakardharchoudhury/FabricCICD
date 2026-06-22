@@ -42,15 +42,13 @@ Items are in **Fabric Git source format** — produced when you Git-connect a wo
    `NB_03_Aggregate_Gold` fails with `ModuleNotFoundError: No module named 'sempy_labs'`. Open
    **`semanticlink` → Publish** and wait (~10–20 min). Re-publish only when its libraries change.
    *(On deploy targets, `NB_04_Deploy` publishes the Environment for you — see step 5.)*
-4. **Configure the `DF_Gold_PA` destination** (one-time per stage). Open **`DF_Gold_PA` → Edit →
-   `GoldProductionDaily` → Data destination**, confirm it points at the stage's `Gold_LH` /
-   `production_daily` (Replace), **sign in**, **Save**. *(In Dev only:* if you Git-connected a **new**
-   Dev workspace, also update the `SilverWorkspaceId` / `SilverLakehouseId` parameters to your Dev
-   `Silver_LH`. On deploy
-   targets, `NB_04_Deploy` rewrites both source parameters and destination GUIDs automatically.)*
-   The `SilverProduction` / `GoldProductionDaily` previews will error until the pipeline has run once
-   (the source `production_conformed` doesn't exist yet) — that's expected; just set the destination
-   and **Save**, no preview needed.
+4. **Configure `DF_Gold_PA`** (one-time per stage):
+   - **Parameters** — set `SilverWorkspaceId` / `SilverLakehouseId` to this stage's `Silver_LH`.
+   - **Destination** — open **Edit → `GoldProductionDaily` → Data destination**, point it at the stage's
+     `Gold_LH` / `production_daily` (Replace), **sign in**, **Save**.
+
+   *(On deploy targets, `NB_04_Deploy` rewrites both automatically — you only fix the destination
+   connection sign-in.)*
 5. **Validate in Dev, then deploy to Prod:**
    - In **Dev**, run **`PL_Refresh_Master`** (Bronze→Silver→Gold) and open **`Gold_Dashboard`** to confirm it loads.
    - Create an empty **Prod** workspace (e.g. `ws-CICD-PROD`); `NB_04_Deploy` creates the lakehouse shells.
