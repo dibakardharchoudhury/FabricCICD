@@ -55,13 +55,20 @@ workspace and **commit from Fabric**.
    - Local / CI: leave `local_repo_path = ""` to auto-detect the checked-out repo.
 2. **Run all cells.** `NB_04_Deploy` publishes every item, rewrites all Dev GUIDs to the
    target stage, and rebinds the Direct Lake model to the target's `Gold_LH`.
-3. **One-time per stage — sign in to the `DF_Gold_PA` destination.** fabric-cicd publishes the
+3. **One-time per stage — publish the `semanticlink` Environment.** fabric-cicd publishes the
+   Environment *definition*, but a brand-new Fabric Environment is **unpublished** until you build
+   it, so its custom libraries (`semantic-link-labs` / `sempy_labs`) aren't available to notebooks
+   yet. Open **`semanticlink` Environment → Publish** and wait for the build to finish (it can take
+   ~10–20 min). Until this completes, `NB_03_Aggregate_Gold` fails with
+   `ModuleNotFoundError: No module named 'sempy_labs'`. You only do this once per stage; later
+   deploys reuse the published Environment (re-publish only when its libraries change).
+4. **One-time per stage — sign in to the `DF_Gold_PA` destination.** fabric-cicd publishes the
    dataflow definition but **cannot bind its Dataflow Gen2 connection** (connections are
    tenant-level and not auto-mapped). On a stage's first deploy, open **`DF_Gold_PA` → Edit →
    `GoldProductionDaily` → Data destination** (gear), confirm it points at this stage's `Gold_LH`
    / `production_daily` (Replace), **sign in**, and **Save**. You only do this once per stage; later
    deploys reuse the connection.
-4. In the target workspace, run **`PL_Refresh_Master`** once. Git never carries table data,
+5. In the target workspace, run **`PL_Refresh_Master`** once. Git never carries table data,
    so this (re)creates the tables, loads data, and `NB_03` refreshes `Gold_SM`.
 
 That's it — `Gold_Dashboard` in the target now shows live data.
@@ -97,6 +104,9 @@ Nothing is hardcoded — add an item to the repo and it is picked up automatical
 
 - **Table data isn't in Git** — only the lakehouse container is. Always run
   `PL_Refresh_Master` after a deploy.
+- **A new `semanticlink` Environment must be published once per stage** before the pipeline
+  runs — fabric-cicd ships the definition but doesn't build it, so `sempy_labs` is missing until
+  you Publish the Environment (see step 3 above).
 - **Direct Lake on OneLake** can't be rebound by a deployment rule, so `NB_04` does it in
   code (needs `semantic-link-labs`; workspace Admin/Member can rebind the model).
 - **The `DF_Gold_PA` connection isn't deployed** — fabric-cicd can't bind a Dataflow Gen2
@@ -139,4 +149,19 @@ metadata before Direct Lake can frame them — until then the refresh returns `0
 `NB_03` already retries over a long window (~28 min) to ride this out; just let it run, or re-run the
 notebook later. Steady-state runs overwrite data only (table identity preserved) and refresh on the
 first attempt.
+
+### `NB_03_Aggregate_Gold` fails with `ModuleNotFoundError: No module named 'sempy_labs'`
+
+The pipeline surfaces `Notebook execution failed ... "errorName":"ModuleNotFoundError",
+"errorValue":"No module named 'sempy_labs'"`. The cause is a **new, unpublished Environment**:
+fabric-cicd deployed the `semanticlink` Environment *definition*, but a Fabric Environment must be
+**built/published** before its custom libraries (`semantic-link-labs`, which provides `sempy_labs`)
+are installed on the Spark pool. Until then the notebook attached to that Environment starts without
+the package.
+
+Fix (one-time per stage):
+1. Open **`semanticlink` Environment → Publish** and wait for the build to finish (~10–20 min).
+2. Re-run `PL_Refresh_Master` (or just `NB_03_Aggregate_Gold`).
+
+Re-publish the Environment only when its libraries change; routine deploys reuse the published build.
 
