@@ -34,13 +34,14 @@ workspace and **commit from Fabric**.
 
 ## One-time setup
 
-1. Create a **Dev** workspace and **Git-connect** it to this repo.
-2. Build the items in Dev (or sync them from this repo), then **commit from Fabric** so the
+1. **Fork this repo** (or create your own copy) and **Git-connect** your **Dev** workspace to
+   your fork. You commit your changes to your fork, not to the upstream repo.
+2. Build the items in Dev (or sync them from your fork), then **commit from Fabric** so the
    repo holds the source format.
 3. Create a **target** workspace for each stage (e.g. `ws-CICD-PROD`). It can be empty —
    `NB_04_Deploy` creates the lakehouse shells.
-4. The identity running `NB_04_Deploy` must be **Admin/Member on both workspaces** and
-   **own `Gold_SM`** (required to rebind Direct Lake).
+4. The identity running `NB_04_Deploy` must be **Admin/Member on both workspaces** (workspace
+   Admin/Member can already modify `Gold_SM`, so no separate model ownership is needed).
 5. *(Only when running inside Fabric)* store a repo-scoped **GitHub PAT** in **Azure Key Vault**
    so the Spark node can clone the repo. Not needed locally or in CI.
 
@@ -97,7 +98,7 @@ Nothing is hardcoded — add an item to the repo and it is picked up automatical
 - **Table data isn't in Git** — only the lakehouse container is. Always run
   `PL_Refresh_Master` after a deploy.
 - **Direct Lake on OneLake** can't be rebound by a deployment rule, so `NB_04` does it in
-  code (needs `semantic-link-labs` and ownership of the model).
+  code (needs `semantic-link-labs`; workspace Admin/Member can rebind the model).
 - **The `DF_Gold_PA` connection isn't deployed** — fabric-cicd can't bind a Dataflow Gen2
   connection, so the destination needs a **one-time sign-in per stage** (see step 3 above).
 - **`parameter.yml` is generated at deploy time** and not checked in — keep
