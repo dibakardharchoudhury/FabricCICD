@@ -36,7 +36,11 @@ Items are in **Fabric Git source format** — produced when you Git-connect a wo
 ## Steps
 
 1. **Fork** this repo and **Git-connect** your **Dev** workspace to your fork (commit to your fork, not upstream).
-2. Build the items in Dev (or sync from your fork).
+2. Build the items in Dev (or sync from your fork). On a **fresh** Dev, re-attach each notebook's
+   lakehouses and set the **default** to its layer — `NB_01`→Bronze, `NB_02`→Bronze+Silver (default
+   Silver), `NB_03`→Silver+Gold (default Gold). Git sync carries the *source* workspace's lakehouse
+   GUIDs, which don't resolve in a new workspace. *(`NB_04` needs none; deploy targets are rewritten
+   automatically by `NB_04_Deploy`.)*
 3. **Publish the `semanticlink` Environment in Dev** (one-time). Git sync brings the Environment
    *definition* but doesn't build it, so `semantic-link-labs` / `sempy_labs` is unavailable and
    `NB_03_Aggregate_Gold` fails with `ModuleNotFoundError: No module named 'sempy_labs'`. Open

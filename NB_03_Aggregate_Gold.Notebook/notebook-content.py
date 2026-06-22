@@ -13,9 +13,6 @@
 # META       "default_lakehouse_workspace_id": "292e18c3-b95e-42d1-bb02-9a2064fee5b8",
 # META       "known_lakehouses": [
 # META         {
-# META           "id": "cee2ea93-ccb4-4bb3-8338-4a91840b9509"
-# META         },
-# META         {
 # META           "id": "4207398e-6d15-4407-8d8d-cbb50d661ec6"
 # META         },
 # META         {
@@ -236,6 +233,7 @@ print(f"✅ Gold_LH.field_kpi_facts: {df_kpi_facts.count()} rows")
 # exist and are overwritten DATA-ONLY (identity preserved), so there is nothing to re-register and the
 # first attempt normally succeeds immediately.
 import sempy_labs as labs
+from sempy_labs import directlake
 import notebookutils
 import time
 
@@ -266,6 +264,28 @@ _SEMANTIC_MODEL = "Gold_SM"
 # attempt 1, so this big ceiling only ever costs time on the very first run in a new stage.
 _MAX_ATTEMPTS   = 15         # total tries
 _BACKOFF_SECS   = 120        # wait between tries (create-from-scratch sync can run ~10 min+)
+
+# ── Re-point Gold_SM at THIS workspace's Gold_LH BEFORE refreshing (self-healing rebind) ─────
+# WHY: Gold_SM is published from Git with its Direct Lake source path baked to the ORIGINAL Dev
+# workspace/lakehouse GUID (.../<devWorkspaceId>/<devGoldLhId>). parameter.yml deliberately does NOT
+# rewrite the SemanticModel, so the ONLY thing that re-points it per stage is a code rebind. If that
+# rebind never ran for this workspace (NB_04 Cell 6b skipped, or the repo was Git-synced straight
+# into this workspace), the refresh below frames against a lakehouse GUID that does not exist here and
+# fails with "The Fabric artifact '<devGoldLhId>' is not found, or you do not have permission...".
+# Rebinding to the SAME-named Gold_LH in the CURRENT workspace (resolved at runtime) makes this
+# notebook self-healing and independent of how it was deployed. Idempotent: if the model already
+# points at this workspace's Gold_LH it is effectively a no-op. Needs workspace Admin/Member — the
+# same right the refresh already requires. use_sql_endpoint=False = Direct Lake OVER ONELAKE.
+_GOLD_LAKEHOUSE = "Gold_LH"
+_gold_lh_meta = notebookutils.lakehouse.get(_GOLD_LAKEHOUSE, _ws_id)
+_gold_lh_id   = _gold_lh_meta["id"] if isinstance(_gold_lh_meta, dict) else _gold_lh_meta.id
+directlake.update_direct_lake_model_connection(
+    dataset=_SEMANTIC_MODEL, workspace=_ws_id,
+    source=_gold_lh_id, source_type="Lakehouse",
+    source_workspace=_ws_id, use_sql_endpoint=False,
+)
+print(f"🔗 '{_SEMANTIC_MODEL}' Direct Lake connection re-pointed to '{_GOLD_LAKEHOUSE}' "
+      f"({_gold_lh_id}) in this workspace before refresh.")
 
 print(f"\n── Refreshing Direct Lake (on OneLake) model '{_SEMANTIC_MODEL}' (full reframe) ──")
 _refreshed = False
