@@ -36,7 +36,7 @@ Items are in **Fabric Git source format** — produced when you Git-connect a wo
 ## Steps
 
 1. **Fork** this repo and **Git-connect** your **Dev** workspace to your fork (commit to your fork, not upstream).
-2. Build the items in Dev (or sync from your fork), then **commit from Fabric**.
+2. Build the items in Dev (or sync from your fork).
 3. **Publish the `semanticlink` Environment** (one-time per workspace). A new Environment is
    unpublished until built, so `semantic-link-labs` / `sempy_labs` is unavailable and
    `NB_03_Aggregate_Gold` fails with `ModuleNotFoundError: No module named 'sempy_labs'`. Open
