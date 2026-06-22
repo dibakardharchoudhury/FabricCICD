@@ -41,20 +41,21 @@ Items are in **Fabric Git source format** — produced when you Git-connect a wo
    unpublished until built, so `semantic-link-labs` / `sempy_labs` is unavailable and
    `NB_03_Aggregate_Gold` fails with `ModuleNotFoundError: No module named 'sempy_labs'`. Open
    **`semanticlink` → Publish** and wait (~10–20 min). Re-publish only when its libraries change.
-4. **Validate in Dev, then deploy to Prod:**
+4. **Sign in to the `DF_Gold_PA` destination** (one-time per stage) — fabric-cicd can't bind a
+   Dataflow Gen2 connection, and it differs per tenant. Open **`DF_Gold_PA` → Edit →
+   `GoldProductionDaily` → Data destination**, confirm it points at the stage's `Gold_LH` /
+   `production_daily` (Replace), **sign in**, **Save**.
+5. **Validate in Dev, then deploy to Prod:**
    - In **Dev**, run **`PL_Refresh_Master`** (Bronze→Silver→Gold) and open **`Gold_Dashboard`** to confirm it loads.
    - Create an empty **Prod** workspace (e.g. `ws-CICD-PROD`); `NB_04_Deploy` creates the lakehouse shells.
    - Open **`NB_04_Deploy`**, set the **parameters** cell (`target_workspace_name`, `environment`,
      `dev_workspace_name`; in Fabric also `git_repo_url`, `key_vault_url`, `git_pat_secret`; local / CI
      leave `local_repo_path = ""`), and **Run all cells**.
-   - **Publish the Environment in Prod** (step 3, once per stage).
-   - **Sign in to the `DF_Gold_PA` destination** (one-time per stage) — fabric-cicd can't bind a
-     Dataflow Gen2 connection. Open **`DF_Gold_PA` → Edit → `GoldProductionDaily` → Data destination**,
-     confirm it points at Prod's `Gold_LH` / `production_daily` (Replace), **sign in**, **Save**.
+   - **Publish the Environment in Prod** (once per stage).
    - Run **`PL_Refresh_Master`** in Prod once — Git carries no table data, so this loads the tables and
      refreshes `Gold_SM`. `Gold_Dashboard` now shows live data.
-5. The identity running `NB_04_Deploy` must be **Admin/Member on both workspaces** (enough to modify `Gold_SM` — no separate ownership).
-6. *(In Fabric only)* store a repo-scoped **GitHub PAT** in **Azure Key Vault** for the clone. Not needed locally / CI.
+6. The identity running `NB_04_Deploy` must be **Admin/Member on both workspaces** (enough to modify `Gold_SM` — no separate ownership).
+7. *(In Fabric only)* store a repo-scoped **GitHub PAT** in **Azure Key Vault** for the clone. Not needed locally / CI.
 
 ## What NB_04 does
 
@@ -82,7 +83,7 @@ Edit in **Dev** → **commit from Fabric** → re-run `NB_04_Deploy` (only chang
 ## Good to know
 
 - **Table data isn't in Git** — only the lakehouse container. Always run `PL_Refresh_Master` after a deploy.
-- **A new Environment must be published per stage** before the pipeline runs (Steps 3 / 4).
+- **A new Environment must be published per stage** before the pipeline runs (Steps 3 / 5).
 - **Direct Lake on OneLake** can't be rebound by a deployment rule, so `NB_04` does it in code (`semantic-link-labs`; Admin/Member suffices).
 - **The `DF_Gold_PA` connection isn't deployed** — needs a **one-time sign-in per stage** (Step 4).
 - **`parameter.yml` is generated at deploy time**, not checked in — keep `generate_parameter_yml = True`.
