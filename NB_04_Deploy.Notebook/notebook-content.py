@@ -48,7 +48,8 @@
 #
 # Run it: standalone (not inside PL_Refresh_Master) as the deploy step — e.g. from a
 #   notebook scheduled after a merge to main, or invoked by your GitHub Actions runner.
-#   The identity running it must be Member/Admin on the TARGET workspace and own Gold_SM.
+#   The identity running it must be Member/Admin on the TARGET workspace (workspace
+#   Admin/Member can already modify Gold_SM — no separate model ownership is needed).
 # Library: needs 'fabric-cicd'. Cell 2 %pip-installs it for convenience; for production
 #   attach a Fabric ENVIRONMENT with fabric-cicd pre-installed and delete the %pip line.
 # -----------------------------------------------------------------------------------
@@ -95,8 +96,8 @@ dev_workspace_name     = "ws-CICD-DevTest"     # SOURCE stage; its GUIDs become 
 #   repo to THIS stage's matching lakehouse. Each SM is DISCOVERED from the repo; its OneLake
 #   source path (.../<workspaceGuid>/<lakehouseGuid>) is read from the model definition, the Dev
 #   lakehouse GUID is translated back to a name, and the model is rebound to the SAME-named
-#   lakehouse in the target stage. Needs semantic-link-labs + ownership of the model(s). A
-#   find_replace cannot safely rewrite a Direct Lake expression, so this is done in code here.
+#   lakehouse in the target stage. Needs semantic-link-labs (workspace Admin/Member can rebind
+#   the model). A find_replace cannot safely rewrite a Direct Lake expression, so this is done in code here.
 rebind_direct_lake     = True
 
 # NOTE: the Variable Library (VL_CICD_Bindings) is intentionally NOT deployed. Every stage
