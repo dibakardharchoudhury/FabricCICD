@@ -3,11 +3,12 @@
 A Bronze → Silver → Gold lakehouse promoted between Fabric workspaces **entirely from code**
 with [fabric-cicd](https://microsoft.github.io/fabric-cicd/). One notebook — `NB_04_Deploy` —
 publishes every repo item into a target workspace and rebinds all cross-workspace references.
-No manual clicks, no Deployment Pipeline.
+No Fabric Deployment Pipeline is required; Dataflow credentials still require a one-time sign-in
+in each workspace.
 
 ## Pipeline
 
-```
+```text
 Bronze_LH ─ NB_01_Seed_Bronze        (inline sample data)
    └► Silver_LH ─ NB_02_Transform_Silver
         └► Gold_LH ─ DF_Gold_PA → NB_03_Aggregate_Gold
@@ -21,49 +22,175 @@ Gold tables (no separate model-refresh activity).
 
 | Path | What it is |
 | --- | --- |
-| `Bronze_LH` / `Silver_LH` / `Gold_LH` `.Lakehouse/` | Medallion lakehouses |
-| `NB_01` … `NB_03` `.Notebook/` | Transform notebooks |
-| `DF_Gold_PA.Dataflow/` | Builds Gold `production_daily` (Dataflow Gen2) |
-| `PL_Refresh_Master.DataPipeline/` | Orchestrates Bronze→Gold |
-| `Gold_SM.SemanticModel/` | Direct Lake (on OneLake) model |
-| `Gold_Dashboard.Report/` | Report on `Gold_SM` |
+| `Bronze/` | `Bronze_LH` and `NB_01_Seed_Bronze` |
+| `Silver/` | `Silver_LH` and `NB_02_Transform_Silver` |
+| `Gold/` | `Gold_LH`, `DF_Gold_PA`, `NB_03`, pipeline, model, and report |
+| `Deploy/NB_04_Deploy.Notebook/` | **Deploy tool** — publishes everything to a stage |
 | `semanticlink.Environment/` | Spark env (`fabric-cicd`, `semantic-link-labs`) |
-| `NB_04_Deploy.Notebook/` | **Deploy tool** — publishes everything to a stage |
 
 Items are in **Fabric Git source format** — produced when you Git-connect a workspace and
 **commit from Fabric**.
 
-## Steps
+## End-to-end setup
 
-1. **Fork** this repo and **Git-connect** your **Dev** workspace to your fork (commit to your fork, not upstream).
-2. Build the items in Dev (or sync from your fork). On a **fresh** Dev, re-attach each notebook's
-   lakehouses and set the **default** to its layer — `NB_01`→Bronze, `NB_02`→Bronze+Silver (default
-   Silver), `NB_03`→Silver+Gold (default Gold). Git sync carries the *source* workspace's lakehouse
-   GUIDs, which don't resolve in a new workspace. *(`NB_04` needs none; deploy targets are rewritten
-   automatically by `NB_04_Deploy`.)*
-3. **Publish the `semanticlink` Environment in Dev** (one-time). Git sync brings the Environment
-   *definition* but doesn't build it, so `semantic-link-labs` / `sempy_labs` is unavailable and
-   `NB_03_Aggregate_Gold` fails with `ModuleNotFoundError: No module named 'sempy_labs'`. Open
-   **`semanticlink` → Publish** and wait (~10–20 min). Re-publish only when its libraries change.
-   *(On deploy targets, `NB_04_Deploy` publishes the Environment for you — see step 5.)*
-4. **Configure `DF_Gold_PA`** (one-time per stage):
-   - **Parameters** — set `SilverWorkspaceId` / `SilverLakehouseId` to this stage's `Silver_LH`.
-   - **Destination** — open **Edit → `GoldProductionDaily` → Data destination**, point it at the stage's
-     `Gold_LH` / `production_daily` (Replace), **sign in**, **Save**.
+There are two different first-time paths:
 
-   *(On deploy targets, `NB_04_Deploy` rewrites both automatically — you only fix the destination
-   connection sign-in.)*
-5. **Validate in Dev, then deploy to Prod:**
-   - In **Dev**, run **`PL_Refresh_Master`** (Bronze→Silver→Gold) and open **`Gold_Dashboard`** to confirm it loads.
-   - Create an empty **Prod** workspace (e.g. `ws-CICD-PROD`); `NB_04_Deploy` creates the lakehouse shells.
-   - Open **`NB_04_Deploy`**, set the **parameters** cell (`target_workspace_name`, `environment`,
-     `dev_workspace_name`; in Fabric also `git_repo_url`, `key_vault_url`, `git_pat_secret`; local / CI
-     leave `local_repo_path = ""`), and **Run all cells**. fabric-cicd deploys **and publishes** the
-     `semanticlink` Environment (waiting for the build), so the first run takes ~20 min.
-   - Run **`PL_Refresh_Master`** in Prod once — Git carries no table data, so this loads the tables and
-     refreshes `Gold_SM`. `Gold_Dashboard` now shows live data.
-6. The identity running `NB_04_Deploy` must be **Admin/Member on both workspaces** (enough to modify `Gold_SM` — no separate ownership).
-7. *(In Fabric only)* store a repo-scoped **GitHub PAT** in **Azure Key Vault** for the clone. Not needed locally / CI.
+- **Fresh Dev from Git:** use Part A. Git creates the item definitions, but notebook bindings,
+  Environment publication, Dataflow credentials, and all table data still need bootstrapping.
+- **Fresh target deployed by `NB_04_Deploy`:** use Part B. `NB_04` deploys and rebinds the item
+  definitions, but the Lakehouses are still empty and the Dataflow destination needs a sign-in.
+
+Do not configure the Dataflow destination while every Lakehouse is empty. Its source is
+`Silver_LH.dbo.production_conformed`; until that table exists, Fabric shows **"source query did not
+return a table"**, cannot calculate column mappings, and disables **Save settings**.
+
+### Part A — Set up a fresh Dev workspace from Git
+
+1. **Fork and connect the repo.** Fork this repository, create/open the Dev workspace, and connect
+   Fabric Git integration to your fork and branch. Sync the workspace from Git.
+
+2. **Attach the notebook Lakehouses.** Git carries the original workspace GUIDs, which do not resolve
+   in a different workspace. In each notebook's Lakehouses pane, attach these items and set the default:
+
+   | Notebook | Attach | Default |
+   | --- | --- | --- |
+   | `NB_01_Seed_Bronze` | `Bronze_LH` | `Bronze_LH` |
+   | `NB_02_Transform_Silver` | `Bronze_LH`, `Silver_LH` | `Silver_LH` |
+   | `NB_03_Aggregate_Gold` | `Silver_LH`, `Gold_LH` | `Gold_LH` |
+
+   `NB_04_Deploy` does not need a Lakehouse attachment.
+
+3. **Publish the `semanticlink` Environment.** Open `semanticlink` and select **Publish**. Wait for
+   the build to finish (~10–20 minutes). Git sync creates the Environment definition but does not
+   build its libraries. `NB_03` needs `semantic-link-labs` / `sempy_labs`.
+
+4. **Create the Bronze source tables.** Run `NB_01_Seed_Bronze` and verify these tables exist under
+   `Bronze_LH.dbo`:
+
+   - `production_raw`
+   - `cost_raw`
+   - `schedule_raw`
+
+5. **Create the Silver source tables.** Run `NB_02_Transform_Silver` and verify these tables exist
+   under `Silver_LH.dbo`:
+
+   - `production_conformed`
+   - `cost_conformed`
+   - `schedule_conformed`
+
+6. **Configure the Dataflow source.** Open `DF_Gold_PA` in edit mode. Set its parameters to the Dev
+   workspace's actual IDs:
+
+   - `SilverWorkspaceId` = the current Dev workspace ID
+   - `SilverLakehouseId` = the current Dev `Silver_LH` item ID
+
+   Select `SilverProduction` and refresh its preview. **Do not continue until rows and columns appear.**
+   If it returns no table, recheck the two IDs and confirm the Silver tables were created in the
+   preceding step.
+
+7. **Configure the Dataflow destination.** Select `GoldProductionDaily`, then **Data destination**:
+
+   - Choose **New table**. The table should not exist on a fresh setup.
+   - Select the current Dev workspace → `Gold_LH` → `dbo`.
+   - Enter table name `production_daily` and select **Next**.
+   - Leave **Use automatic settings** enabled. Confirm column mappings are displayed.
+   - Choose the **Replace** update method when shown, sign in to the Lakehouse connection, and select
+     **Save settings**.
+   - Save/publish the Dataflow.
+
+   If **Save settings** is disabled with "source query did not return a table," cancel the destination
+   dialog and return to Step 6. The destination cannot be configured until the Silver preview works.
+
+8. **Run the Dataflow once.** Refresh `DF_Gold_PA` and verify
+   `Gold_LH.dbo.production_daily` now exists. This table must exist before `NB_03` runs.
+
+9. **Run the Gold notebook.** Run `NB_03_Aggregate_Gold`. It requires `production_daily`, creates:
+
+   - `cost_monthly`
+   - `schedule_summary`
+   - `field_kpi_facts`
+
+   It then rebinds and refreshes the Direct Lake semantic model `Gold_SM`. On the first run, newly
+   created Delta tables can take several minutes to register; let the built-in refresh retry continue.
+
+10. **Validate Dev end to end.** Run `PL_Refresh_Master`. It should complete this fixed sequence:
+
+    ```text
+    NB_01_Seed_Bronze
+      → NB_02_Transform_Silver
+      → DF_Gold_PA
+      → NB_03_Aggregate_Gold
+      → Gold_SM refreshed by NB_03
+    ```
+
+    Open `Gold_Dashboard` and confirm the visuals contain data. From now on, run
+    `PL_Refresh_Master`; the manual notebook/Dataflow sequence above is only for first-time setup.
+
+### Part B — Deploy and bootstrap a fresh target workspace
+
+1. **Complete Part A in Dev first.** Dev must work end to end before it is used as the deployment source.
+
+2. **Commit from Fabric to Git.** Commit the validated Dev item definitions to your fork. Table data is
+   never committed; only item and Lakehouse definitions are stored in Git.
+
+3. **Prepare deployment authentication.** The identity running `NB_04_Deploy` must be Admin/Member on
+   both Dev and the target workspace. For an in-Fabric run, store a fine-grained, repo-scoped GitHub PAT
+   in Azure Key Vault. A local/CI run can use the existing checkout and does not need the PAT.
+
+4. **Create an empty target workspace.** For example, create `ws-CICD-PROD`. Do not manually create
+   its Fabric items; `NB_04_Deploy` creates them from Git.
+
+5. **Run `NB_04_Deploy`.** In its parameters section, set:
+
+   - `target_workspace_name` to the target workspace
+   - `environment` to `Production`
+   - `dev_workspace_name` to the validated Dev workspace
+   - For an in-Fabric run: `git_repo_url`, `key_vault_url`, and `git_pat_secret`
+   - For local/CI: leave `local_repo_path = ""` to auto-detect the checkout
+
+   Run all sections. `NB_04` creates/updates the Fabric items, rewrites cross-workspace references,
+   rebinds `Gold_SM` to the target `Gold_LH`, and publishes the `semanticlink` Environment. The first
+   Environment build can take ~20 minutes.
+
+6. **Confirm target bindings.** In the target workspace, verify the three notebook attachments match
+   the table in Part A Step 2. Open `DF_Gold_PA` and verify `SilverWorkspaceId` and
+   `SilverLakehouseId` point to the target workspace and its `Silver_LH`; `NB_04` normally rewrites
+   these automatically.
+
+7. **Bootstrap Bronze and Silver in the target.** The deployed Lakehouses are empty. Run
+   `NB_01_Seed_Bronze`, then `NB_02_Transform_Silver`. Confirm
+   `Silver_LH.dbo.production_conformed` exists before opening the Dataflow destination settings.
+
+8. **Confirm and authenticate the Dataflow destination.** Open `DF_Gold_PA` → `GoldProductionDaily`
+   → **Data destination**. It must target the target workspace's `Gold_LH.dbo.production_daily` with
+   Replace behavior. Sign in to the target Lakehouse connection and save/publish the Dataflow.
+
+   On an empty target, choose **New table**. If mappings are unavailable, return to Step 7 and verify
+   the `SilverProduction` preview returns rows. Deployment can rewrite destination IDs, but it cannot
+   deploy a user's Dataflow connection credential.
+
+9. **Run the target pipeline.** Run `PL_Refresh_Master`. Re-running `NB_01` and `NB_02` is intentional
+   and safe. The pipeline creates `production_daily`, then runs `NB_03` to create the remaining Gold
+   tables and refresh `Gold_SM`.
+
+10. **Validate the target.** Confirm all four tables exist under `Gold_LH.dbo`:
+
+    - `production_daily`
+    - `cost_monthly`
+    - `schedule_summary`
+    - `field_kpi_facts`
+
+    Open `Gold_Dashboard` and verify it displays current data.
+
+### First-run checkpoints
+
+| Before this action | This must already be true |
+| --- | --- |
+| Configure `DF_Gold_PA` destination | `SilverProduction` preview returns a table |
+| Refresh `DF_Gold_PA` | Source IDs are correct and destination connection is signed in |
+| Run `NB_03_Aggregate_Gold` | `Gold_LH.dbo.production_daily` exists |
+| Open `Gold_Dashboard` | `NB_03` completed and refreshed `Gold_SM` |
+| Use only `PL_Refresh_Master` for future runs | One-time Dataflow setup is complete |
 
 ## What NB_04 does
 
@@ -92,9 +219,11 @@ Edit in **Dev** → **commit from Fabric** → re-run `NB_04_Deploy` (only chang
 
 - **Table data isn't in Git** — only the lakehouse container. Always run `PL_Refresh_Master` after a deploy.
 - **`NB_04_Deploy` publishes the Environment for you** on deploy targets (fabric-cicd builds it and
-  waits, ~20 min on first run). Only **Git-synced** workspaces (e.g. Dev) need a manual Publish (Step 3).
+  waits, ~20 min on first run). Only **Git-synced** workspaces (e.g. Dev) need the manual Environment
+  publish described in Part A.
 - **Direct Lake on OneLake** can't be rebound by a deployment rule, so `NB_04` does it in code (`semantic-link-labs`; Admin/Member suffices).
-- **The `DF_Gold_PA` connection isn't deployed** — needs a **one-time sign-in per stage** (Step 4).
+- **The `DF_Gold_PA` credential isn't deployed** — follow the one-time source/destination setup in
+  Part A for Dev and Part B for each deployment target.
 - **`parameter.yml` is generated at deploy time**, not checked in — keep `generate_parameter_yml = True`.
 - Items pair across stages by **name** — keep display names identical.
 
@@ -107,6 +236,7 @@ Generic `ActionUserFailure`; Refresh history shows `Data source credentials are 
 failure (`18456`) opening the Gen2 staging warehouse (`StagingLakehouseForDataflows_*`) after a
 mid-refresh backend update invalidated the token \u2014 the source query succeeds, only the write fails.
 Fix in order:
+
 1. **Re-run** the dataflow / `PL_Refresh_Master` \u2014 usually clears next run.
 2. If it persists, **`DF_Gold_PA` \u2192 Edit \u2192 sign in again**, **Save**, refresh.
 3. If recurring, bind the connection to a **service principal** so a backend roll doesn't drop the session.
@@ -127,4 +257,3 @@ on the Spark pool. This happens when the Environment arrived via **Git sync** (G
 definition but doesn't build it) — typically the Dev workspace. Fix: **`semanticlink` → Publish**
 (~10–20 min), then re-run `PL_Refresh_Master`. Re-publish only when libraries change.
 *(Deploy targets don't hit this — `NB_04_Deploy` publishes the Environment during deploy.)*
-

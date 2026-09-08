@@ -141,14 +141,14 @@ _supported_item_types = [
 # the target's lakehouses are managed entirely outside this repo AND already share its logical ids.
 include_lakehouses = True
 
-# exclude_item_name_regex: skip items by DISPLAY NAME at publish time (regex). Escape hatch
-# only — default "" publishes EVERYTHING, including the semanticlink Environment, exactly as it
-# is in the repo. fabric-cicd writes the Environment's Spark compute VERBATIM, so the source
+# exclude_item_name_regex: skip items by DISPLAY NAME at publish time (regex). The default always
+# excludes the local-only insecure deploy notebook, even if it exists in a local checkout. All tracked
+# repo items, including the semanticlink Environment, are otherwise published exactly as committed.
+# fabric-cicd writes the Environment's Spark compute VERBATIM, so the source
 # file (semanticlink.Environment/Setting/Sparkcompute.yml) must already fit the target stage's
-# pool. If a future Environment is ever authored against a bigger pool than a stage has and you
-# get SparkSettingsComputeExceedsPoolLimit, set this to e.g. "^semanticlink$" to skip just that
-# item; the proper fix is to lower its compute in the repo and commit from Fabric.
-exclude_item_name_regex = ""   # "" = publish every item; regex = skip matching display names
+# pool. If a future Environment is ever authored against a bigger pool than a stage has, extend this
+# regex with `|^semanticlink$`; the proper fix is to lower its compute and commit from Fabric.
+exclude_item_name_regex = r"^NB_04_Deploy_NOTSECURE$"
 
 # Remove items in the target workspace that are no longer in Git (orphans). Leave False
 # until you trust the deploy; True keeps the workspace exactly mirroring the repo.
@@ -292,21 +292,27 @@ import yaml
 # --- DYNAMIC publish scope -----------------------------------------------------------------
 # Build item_type_in_scope FROM THE REPO at run time instead of a hardcoded list. A Fabric
 # source-format repo stores every item as a `<DisplayName>.<ItemType>` folder (e.g.
-# `NB_01_Seed_Bronze.Notebook`, `Gold_SM.SemanticModel`). We scan repo_directory for those
-# folders, take the suffix after the last dot, and keep only suffixes fabric-cicd supports.
+# `NB_01_Seed_Bronze.Notebook`, `Gold_SM.SemanticModel`). Items may be nested inside Fabric workspace
+# folders such as Bronze/, Silver/, Gold/, and Deploy/, so scan recursively, take the suffix after
+# the last dot, and keep only suffixes fabric-cicd supports.
 # Result: ONLY the item types actually committed in the repo are published — no Eventhouse,
 # Warehouse, KQL*, etc. iterations when those folders don't exist. (`Publishing Workspace
 # Folders` in fabric-cicd's log is just the folder hierarchy being mirrored, not an item type.)
-def _discover_item_types(repo_dir):
-    found = set()
-    for _n in os.listdir(repo_dir):
-        if os.path.isdir(os.path.join(repo_dir, _n)) and "." in _n:
-            _suffix = _n.rsplit(".", 1)[1]
-            if _suffix in _supported_item_types:
-                found.add(_suffix)
+def _discover_repo_items(repo_dir):
+    found = []
+    for root, dirs, _files in os.walk(repo_dir):
+        dirs[:] = [d for d in dirs if d != ".git" and not d.startswith(".")]
+        item_dirs = []
+        for dirname in dirs:
+            display_name, separator, item_type = dirname.rpartition(".")
+            if separator and item_type in _supported_item_types:
+                found.append((item_type, display_name, os.path.join(root, dirname)))
+                item_dirs.append(dirname)
+        dirs[:] = [d for d in dirs if d not in item_dirs]
     return found
 
-item_type_in_scope = sorted(_discover_item_types(repo_directory))
+_repo_item_dirs = _discover_repo_items(repo_directory)
+item_type_in_scope = sorted({item_type for item_type, _name, _path in _repo_item_dirs})
 # Trim the discovered set per the Cell 1 toggles:
 #   - drop Lakehouse unless include_lakehouses (avoids duplicate-lakehouse risk),
 #   - always drop VariableLibrary: nothing in the runtime pipeline consumes VL_CICD_Bindings
@@ -333,11 +339,8 @@ if generate_parameter_yml:
     # DISCOVER every item from the repo's <DisplayName>.<ItemType> folders — nothing is
     # hardcoded. repo_items maps {item_type: [display_name, ...]} for the types we reference.
     repo_items = {}
-    for _n in os.listdir(repo_directory):
-        if os.path.isdir(os.path.join(repo_directory, _n)) and "." in _n:
-            _name, _, _suffix = _n.rpartition(".")
-            if _suffix in _supported_item_types:
-                repo_items.setdefault(_suffix, []).append(_name)
+    for _item_type, _display_name, _path in _repo_item_dirs:
+        repo_items.setdefault(_item_type, []).append(_display_name)
 
     def _dev_guid(itype, name):
         """Dev GUID for a repo item resolved BY NAME; None if it isn't in Dev yet (harmless)."""
@@ -448,8 +451,12 @@ if rebind_direct_lake:
                      for i in _fabric_get(f"/workspaces/{_dev_ws_dl}/items?type=Lakehouse")["value"]}
 
     _rebound = []
-    for _sm_dir in sorted(glob.glob(os.path.join(repo_directory, "*.SemanticModel"))):
-        _sm_name = os.path.basename(_sm_dir).rsplit(".", 1)[0]
+    _semantic_model_dirs = sorted(
+        (_name, _path)
+        for _type, _name, _path in _repo_item_dirs
+        if _type == "SemanticModel"
+    )
+    for _sm_name, _sm_dir in _semantic_model_dirs:
         _text = ""
         for _f in glob.glob(os.path.join(_sm_dir, "**", "*.tmdl"), recursive=True):
             with open(_f, encoding="utf-8") as _fh:
