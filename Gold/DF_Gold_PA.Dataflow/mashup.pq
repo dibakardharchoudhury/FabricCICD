@@ -1,7 +1,7 @@
 [StagingDefinition = [Kind = "FastCopy"]]
 section Section1;
-shared SilverWorkspaceId = "292e18c3-b95e-42d1-bb02-9a2064fee5b8" meta [IsParameterQuery = true, IsParameterQueryRequired = true, Type = type text];
-shared SilverLakehouseId = "4207398e-6d15-4407-8d8d-cbb50d661ec6" meta [IsParameterQuery = true, IsParameterQueryRequired = true, Type = type text];
+shared SilverWorkspaceId = "3f0dbdcc-2520-4432-bbb2-c7a53375c73c" meta [IsParameterQuery = true, IsParameterQueryRequired = true, Type = type text];
+shared SilverLakehouseId = "9c0b5838-532b-4a99-9d34-29cd1576d7a7" meta [IsParameterQuery = true, IsParameterQueryRequired = true, Type = type text];
 shared SilverProduction = let
   Source = Lakehouse.Contents([CreateNavigationProperties = false, EnableFolding = false]),
   Workspace = Source{[workspaceId = SilverWorkspaceId]}[Data],
@@ -32,8 +32,8 @@ in
   Sorted;
 shared GoldProductionDaily_DataDestination = let
   Pattern = Lakehouse.Contents([CreateNavigationProperties = false, EnableFolding = false, HierarchicalNavigation = true, EnableVorder = true, OutputMetadataRefresh = true]),
-  Navigation_1 = Pattern{[workspaceId = "292e18c3-b95e-42d1-bb02-9a2064fee5b8"]}[Data],
-  Navigation_2 = Navigation_1{[lakehouseId = "06434335-fbfd-4d2b-879d-4962bdd8d605"]}[Data],
+  Navigation_1 = Pattern{[workspaceId = "3f0dbdcc-2520-4432-bbb2-c7a53375c73c"]}[Data],
+  Navigation_2 = Navigation_1{[lakehouseId = "663f3fff-65c9-485e-ae23-fd03018fc613"]}[Data],
   Navigation_3 = Navigation_2{[Id = "dbo", ItemKind = "Schema"]}[Data],
   TableNavigation = Navigation_3{[Id = "production_daily", ItemKind = "Table"]}?[Data]?
 in

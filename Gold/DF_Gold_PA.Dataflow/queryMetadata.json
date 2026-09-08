@@ -24,10 +24,11 @@
     },
     "GoldProductionDaily": {
       "queryId": "3227b85e-4cb5-4b86-a091-ad2a64ae3114",
-      "queryName": "GoldProductionDaily"
+      "queryName": "GoldProductionDaily",
+      "loadEnabled": false
     },
     "GoldProductionDaily_DataDestination": {
-      "queryId": "e9853514-812a-42e5-94f9-5664ddaccb1e",
+      "queryId": "2ab5e9e0-34e1-489d-8c2e-8e7787cb6c59",
       "queryName": "GoldProductionDaily_DataDestination",
       "isHidden": true,
       "loadEnabled": false
@@ -37,7 +38,7 @@
     {
       "path": "Lakehouse",
       "kind": "Lakehouse",
-      "connectionId": "{\"ClusterId\":\"89571e2a-2e60-4ba3-bca5-48f3d1b6a2a8\",\"DatasourceId\":\"88a14e43-9e3d-417a-8e7b-38445c38f25a\"}"
+      "connectionId": "{\"ClusterId\":\"4cca20c5-61f5-4cae-ac83-65408507d63d\",\"DatasourceId\":\"8c8a9783-9d74-4ab5-a3a0-992f8b59eff4\"}"
     }
   ]
 }

@@ -8,15 +8,15 @@
 # META   },
 # META   "dependencies": {
 # META     "lakehouse": {
-# META       "default_lakehouse": "06434335-fbfd-4d2b-879d-4962bdd8d605",
+# META       "default_lakehouse": "663f3fff-65c9-485e-ae23-fd03018fc613",
 # META       "default_lakehouse_name": "Gold_LH",
-# META       "default_lakehouse_workspace_id": "292e18c3-b95e-42d1-bb02-9a2064fee5b8",
+# META       "default_lakehouse_workspace_id": "3f0dbdcc-2520-4432-bbb2-c7a53375c73c",
 # META       "known_lakehouses": [
 # META         {
-# META           "id": "4207398e-6d15-4407-8d8d-cbb50d661ec6"
+# META           "id": "663f3fff-65c9-485e-ae23-fd03018fc613"
 # META         },
 # META         {
-# META           "id": "06434335-fbfd-4d2b-879d-4962bdd8d605"
+# META           "id": "9c0b5838-532b-4a99-9d34-29cd1576d7a7"
 # META         }
 # META       ]
 # META     },
