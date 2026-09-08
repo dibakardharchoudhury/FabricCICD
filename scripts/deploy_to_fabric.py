@@ -3,12 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import glob
 import os
-import re
-import sys
-import types
-from unittest.mock import patch
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +45,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dev-workspace", required=True)
     parser.add_argument("--environment", default="Production")
     parser.add_argument("--repository-directory", default=".")
+    parser.add_argument("--git-compare-ref", default="HEAD~1")
+    parser.add_argument("--full-deploy", action="store_true")
     parser.add_argument("--remove-orphans", action="store_true")
     return parser.parse_args()
 
@@ -142,9 +139,6 @@ def generate_parameters(
         "find_value": dev_workspace_id,
         "replace_value": replacement("$workspace.$id"),
     }
-    non_model_types = [item_type for item_type in publish_types if item_type != "SemanticModel"]
-    if "SemanticModel" in publish_types and non_model_types:
-        workspace_rule["item_type"] = non_model_types
     rules.append(workspace_rule)
 
     for item_type in ("Notebook", "Dataflow", "SemanticModel"):
@@ -170,7 +164,7 @@ def generate_parameters(
             {
                 "find_value": dev_item_id,
                 "replace_value": replacement(f"$items.Lakehouse.{display_name}.$id"),
-                "item_type": ["Notebook", "Dataflow"],
+                    "item_type": ["Notebook", "Dataflow", "SemanticModel"],
             }
         )
 
@@ -186,64 +180,49 @@ def generate_parameters(
     print(f"Generated and validated {parameter_file} with {len(rules)} replacement rules")
 
 
-def rebind_direct_lake_models(
+def select_items_to_publish(
     repository_items: list[tuple[str, str, Path]],
     dev_workspace_id: str,
-    target_workspace_name: str,
     target_workspace_id: str,
     api: FabricApi,
-    credential: Any,
-) -> None:
-    sys.modules.setdefault("notebookutils", types.ModuleType("notebookutils"))
-    from sempy_labs._authentication import ServicePrincipalTokenProvider, token_provider
-    from sempy_labs import directlake
-    from sempy_labs.tom import connect_semantic_model
+    repository_directory: Path,
+    git_compare_ref: str,
+) -> list[str]:
+    from fabric_cicd import get_changed_items
 
-    dev_lakehouses = api.get(f"/workspaces/{dev_workspace_id}/items?type=Lakehouse").get("value", [])
-    dev_lakehouse_names = {item["id"]: item["displayName"] for item in dev_lakehouses}
+    selected = set(get_changed_items(repository_directory, git_compare_ref=git_compare_ref))
+    target_items = api.get(f"/workspaces/{target_workspace_id}/items").get("value", [])
+    target_by_type_name = {(item["type"], item["displayName"]): item for item in target_items}
 
-    def connect_with_workspace_name(dataset: Any, readonly: bool = True, workspace: Any = None) -> Any:
-        if str(workspace) == target_workspace_id:
-            workspace = target_workspace_name
-        return connect_semantic_model(dataset=dataset, readonly=readonly, workspace=workspace)
+    for item_type, display_name, _path in repository_items:
+        target_item = target_by_type_name.get((item_type, display_name))
+        if target_item is None:
+            selected.add(f"{display_name}.{item_type}")
+            continue
+        if item_type != "SemanticModel":
+            continue
+        connections = api.get(
+            f"/workspaces/{target_workspace_id}/items/{target_item['id']}/connections"
+        ).get("value", [])
+        if any(dev_workspace_id in connection.get("connectionDetails", {}).get("path", "") for connection in connections):
+            selected.add(f"{display_name}.{item_type}")
+            print(f"Selected {display_name}.{item_type}: its connection still points to Dev")
 
-    provider_context = token_provider.set(ServicePrincipalTokenProvider(credential))
-    try:
-        with patch("sempy_labs.tom.connect_semantic_model", connect_with_workspace_name):
-            for item_type, model_name, model_directory in repository_items:
-                if item_type != "SemanticModel":
-                    continue
-                definition = "\n".join(
-                    Path(file_name).read_text(encoding="utf-8")
-                    for file_name in glob.glob(str(model_directory / "**" / "*.tmdl"), recursive=True)
-                )
-                source_match = re.search(
-                    r"onelake\.dfs\.fabric\.microsoft\.com/[0-9a-fA-F-]{36}/([0-9a-fA-F-]{36})",
-                    definition,
-                )
-                if not source_match:
-                    continue
-                lakehouse_name = dev_lakehouse_names.get(source_match.group(1))
-                if not lakehouse_name:
-                    raise ValueError(
-                        f"Could not resolve the Dev lakehouse used by semantic model '{model_name}'"
-                    )
-                directlake.update_direct_lake_model_connection(
-                    dataset=model_name,
-                    workspace=target_workspace_id,
-                    source=api.resolve_item_id(target_workspace_id, lakehouse_name, "Lakehouse"),
-                    source_type="Lakehouse",
-                    source_workspace=target_workspace_id,
-                    use_sql_endpoint=False,
-                )
-                print(f"Rebound {model_name} to {lakehouse_name} in the target workspace")
-    finally:
-        token_provider.reset(provider_context)
+    return sorted(
+        item
+        for item in selected
+        if item.rsplit(".", 1)[0] not in EXCLUDED_ITEM_NAMES
+    )
 
 
 def main() -> None:
     from azure.identity import AzureCliCredential
-    from fabric_cicd import FabricWorkspace, publish_all_items, unpublish_all_orphan_items
+    from fabric_cicd import (
+        FabricWorkspace,
+        append_feature_flag,
+        publish_all_items,
+        unpublish_all_orphan_items,
+    )
 
     args = parse_args()
     repository_directory = Path(args.repository_directory).resolve()
@@ -276,17 +255,27 @@ def main() -> None:
     )
     print(f"Comparing {len(repository_items)} source items with {args.target_workspace}")
     print("Excluded item names: " + ", ".join(sorted(EXCLUDED_ITEM_NAMES)))
-    publish_all_items(workspace, item_name_exclude_regex=r"^NB_04_Deploy_NOTSECURE$")
+    if args.full_deploy:
+        print("Full deployment requested")
+        publish_all_items(workspace, item_name_exclude_regex=r"^NB_04_Deploy_NOTSECURE$")
+    else:
+        items_to_publish = select_items_to_publish(
+            repository_items,
+            dev_workspace_id,
+            target_workspace_id,
+            api,
+            repository_directory,
+            args.git_compare_ref,
+        )
+        if items_to_publish:
+            append_feature_flag("enable_experimental_features")
+            append_feature_flag("enable_items_to_include")
+            print("Publishing changed, missing, or environment-drifted items: " + ", ".join(items_to_publish))
+            publish_all_items(workspace, items_to_include=items_to_publish)
+        else:
+            print("No changed, missing, or environment-drifted Fabric items to publish")
     if args.remove_orphans:
         unpublish_all_orphan_items(workspace)
-    rebind_direct_lake_models(
-        repository_items,
-        dev_workspace_id,
-        args.target_workspace,
-        target_workspace_id,
-        api,
-        credential,
-    )
     print(f"Deployment to {args.target_workspace} completed")
 
 

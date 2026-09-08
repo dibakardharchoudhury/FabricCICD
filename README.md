@@ -316,8 +316,8 @@ Dev workspace or commit directly to `main` after the initial repository setup.
 The [production workflow](.github/workflows/deploy-production.yml) runs on every merge/push to
 `main`, so Fabric items can use any valid root folder name without maintaining path filters. It
 checks out the approved commit, signs in without a client secret by using GitHub OIDC, installs the
-pinned dependencies on the temporary runner, validates the source, and deploys to Prod.
-`fabric-cicd` compares the complete source with Prod and skips unchanged item definitions.
+pinned dependencies on the temporary runner, validates the source, and deploys only changed,
+missing, or environment-drifted items to Prod.
 
 Configure it once:
 
@@ -362,7 +362,7 @@ Configure it once:
    | Workspace | Required role | Reason |
    | --- | --- | --- |
    | `ws-FabricCICD-DEV` | **Viewer** | Resolves source item IDs used to generate environment parameter mappings. |
-   | `ws-FabricCICD-PROD` | **Member** | Creates and updates Fabric items and performs Direct Lake rebinding. |
+   | `ws-FabricCICD-PROD` | **Member** | Creates and updates Fabric items, including environment-specific Direct Lake definitions. |
 
    **Admin** in Prod is also sufficient but is not required for the current deployment workflow.
    Search for `fabric-rest` when adding access and verify that its application ID is
@@ -388,10 +388,17 @@ in-Fabric deployment.
 
 ### What "only changed items" means
 
-The workflow intentionally gives `fabric-cicd` the complete set of item types present in the repo.
-`publish_all_items()` compares the Git definitions with Prod, creates missing items, updates changed
-items, and skips unchanged items. This is safer than converting `git diff` paths into an allow-list:
-dependent definitions and environment-specific GUID replacement remain available during deployment.
+The workflow compares the pushed commit with the push event's previous commit and passes only changed
+Fabric item folders to `publish_all_items()`. It also includes repository items missing from Prod, so
+the same command can bootstrap newly added items. Semantic models whose deployed connection still
+contains the Dev workspace ID are included as environment drift and repaired even when their Git
+folder did not change. Use `--full-deploy` only for a deliberate complete bootstrap or recovery.
+
+Environment replacement still runs for every selected item. Notebook default and known lakehouse
+IDs, dataflow source/destination IDs, pipeline logical item references, and zero workspace placeholders
+resolve to their Prod counterparts. Direct Lake on OneLake models receive both the Prod workspace ID
+and matching Prod lakehouse ID in the same semantic-model publish transaction; there is no separate
+post-publish XMLA save.
 
 Item deletion is disabled in the automatic workflow. A file deletion in Git therefore does not
 delete the Prod item. Treat deletion as an explicit release operation: review the impact, run the

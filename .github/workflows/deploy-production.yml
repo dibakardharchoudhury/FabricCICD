@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Check out approved main commit
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Sign in to Azure with GitHub OIDC
         uses: azure/login@v2
@@ -48,4 +50,5 @@ jobs:
           python scripts/deploy_to_fabric.py
           --target-workspace "${{ vars.FABRIC_PROD_WORKSPACE }}"
           --dev-workspace "${{ vars.FABRIC_DEV_WORKSPACE }}"
+          --git-compare-ref "${{ github.event.before || 'HEAD~1' }}"
           --environment Production
