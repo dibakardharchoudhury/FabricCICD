@@ -6,6 +6,8 @@ import argparse
 import glob
 import os
 import re
+import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -188,37 +190,46 @@ def rebind_direct_lake_models(
     dev_workspace_id: str,
     target_workspace_id: str,
     api: FabricApi,
+    credential: Any,
 ) -> None:
+    sys.modules.setdefault("notebookutils", types.ModuleType("notebookutils"))
+    from sempy_labs._authentication import ServicePrincipalTokenProvider, token_provider
     from sempy_labs import directlake
 
     dev_lakehouses = api.get(f"/workspaces/{dev_workspace_id}/items?type=Lakehouse").get("value", [])
     dev_lakehouse_names = {item["id"]: item["displayName"] for item in dev_lakehouses}
 
-    for item_type, model_name, model_directory in repository_items:
-        if item_type != "SemanticModel":
-            continue
-        definition = "\n".join(
-            Path(file_name).read_text(encoding="utf-8")
-            for file_name in glob.glob(str(model_directory / "**" / "*.tmdl"), recursive=True)
-        )
-        source_match = re.search(
-            r"onelake\.dfs\.fabric\.microsoft\.com/[0-9a-fA-F-]{36}/([0-9a-fA-F-]{36})",
-            definition,
-        )
-        if not source_match:
-            continue
-        lakehouse_name = dev_lakehouse_names.get(source_match.group(1))
-        if not lakehouse_name:
-            raise ValueError(f"Could not resolve the Dev lakehouse used by semantic model '{model_name}'")
-        directlake.update_direct_lake_model_connection(
-            dataset=model_name,
-            workspace=target_workspace_id,
-            source=api.resolve_item_id(target_workspace_id, lakehouse_name, "Lakehouse"),
-            source_type="Lakehouse",
-            source_workspace=target_workspace_id,
-            use_sql_endpoint=False,
-        )
-        print(f"Rebound {model_name} to {lakehouse_name} in the target workspace")
+    provider_context = token_provider.set(ServicePrincipalTokenProvider(credential))
+    try:
+        for item_type, model_name, model_directory in repository_items:
+            if item_type != "SemanticModel":
+                continue
+            definition = "\n".join(
+                Path(file_name).read_text(encoding="utf-8")
+                for file_name in glob.glob(str(model_directory / "**" / "*.tmdl"), recursive=True)
+            )
+            source_match = re.search(
+                r"onelake\.dfs\.fabric\.microsoft\.com/[0-9a-fA-F-]{36}/([0-9a-fA-F-]{36})",
+                definition,
+            )
+            if not source_match:
+                continue
+            lakehouse_name = dev_lakehouse_names.get(source_match.group(1))
+            if not lakehouse_name:
+                raise ValueError(
+                    f"Could not resolve the Dev lakehouse used by semantic model '{model_name}'"
+                )
+            directlake.update_direct_lake_model_connection(
+                dataset=model_name,
+                workspace=target_workspace_id,
+                source=api.resolve_item_id(target_workspace_id, lakehouse_name, "Lakehouse"),
+                source_type="Lakehouse",
+                source_workspace=target_workspace_id,
+                use_sql_endpoint=False,
+            )
+            print(f"Rebound {model_name} to {lakehouse_name} in the target workspace")
+    finally:
+        token_provider.reset(provider_context)
 
 
 def main() -> None:
@@ -264,6 +275,7 @@ def main() -> None:
         dev_workspace_id,
         target_workspace_id,
         api,
+        credential,
     )
     print(f"Deployment to {args.target_workspace} completed")
 
