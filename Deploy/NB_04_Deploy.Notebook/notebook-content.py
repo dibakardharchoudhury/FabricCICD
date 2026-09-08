@@ -57,7 +57,7 @@
 # Cell 1 — PARAMETERS (tag this cell as "parameters" in the Fabric notebook).
 # environment selects which column of parameter.yml's replace_value is applied. It must
 # match the keys used there ("Development" / "Production").
-target_workspace_name = "ws-CICD-PROD"      # the stage to deploy INTO
+target_workspace_name = "ws-FabricCICD-PROD"      # the stage to deploy INTO
 environment           = "Production"          # "Development" | "Production"
 
 # Git source-format repo (the one Fabric commits to). Cloned locally so fabric-cicd can
@@ -76,7 +76,7 @@ local_repo_path = ""                           # "" = auto-detect; path = use it
 # CLONE path below IS used — git_repo_url + key_vault_url + git_pat_secret are all REQUIRED.
 git_repo_url   = "https://github.com/dibakardharchoudhury/FabricCICD.git"
 git_branch     = "main"
-key_vault_url  = "https://akvFabCap.vault.azure.net/"   # Key Vault holding the GitHub PAT secret
+key_vault_url  = "https://akvfabcapnew.vault.azure.net/"   # Key Vault holding the GitHub PAT secret
 git_pat_secret = "github-pat"                 # KV secret holding a repo-scoped GitHub PAT
 repo_subdir    = ""                            # subfolder inside the repo that holds the
                                                # *.Notebook/*.DataPipeline folders ("" = root)
@@ -90,7 +90,7 @@ repo_subdir    = ""                            # subfolder inside the repo that 
 #   DEV literal GUID; each replace_value is a fabric-cicd dynamic token that resolves against the
 #   TARGET stage. Set False to use the checked-in parameter.yml as-is.
 generate_parameter_yml = True
-dev_workspace_name     = "ws-CICD-DevTest"     # SOURCE stage; its GUIDs become find_value
+dev_workspace_name     = "ws-FabricCICD-DEV"     # SOURCE stage; its GUIDs become find_value
 
 # rebind_direct_lake: after publish, re-point every Direct-Lake-on-OneLake semantic model in the
 #   repo to THIS stage's matching lakehouse. Each SM is DISCOVERED from the repo; its OneLake
@@ -545,7 +545,7 @@ display(HTML(
 # ran in this session. The bootstrap below defines everything it needs (_FABRIC_BASE,
 # _fabric_get, _say, target_workspace_name, target_workspace_id) only if they are missing —
 # which is why running just this cell no longer raises NameError: '_fabric_get' is not defined.
-confirm_delete_workspace = "ws-CICD-PROD"        # set to target_workspace_name (e.g. "ws-CICD-PROD") to actually delete
+confirm_delete_workspace = "ws-FabricCICD-PROD"        # set to target_workspace_name (e.g. "ws-FabricCICD-PROD") to actually delete
 
 # Which workspace to wipe. Re-declared here so the cell stands alone; edit if you ran nothing else.
 target_workspace_name = globals().get("target_workspace_name", "ws-CICD-PROD")
