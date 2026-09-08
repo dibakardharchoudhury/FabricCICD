@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
-import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 
 FABRIC_API = "https://api.fabric.microsoft.com/v1"
@@ -50,8 +47,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--environment", default="Production")
     parser.add_argument("--repository-directory", default=".")
     parser.add_argument("--git-compare-ref", default="HEAD~1")
-    parser.add_argument("--pipeline-run-client-id")
-    parser.add_argument("--verify-pipeline-runs", action="store_true")
     parser.add_argument("--full-deploy", action="store_true")
     parser.add_argument("--remove-orphans", action="store_true")
     return parser.parse_args()
@@ -83,48 +78,6 @@ class FabricApi:
         )
         response.raise_for_status()
         return response.json()
-
-    def patch(self, path: str, payload: dict) -> dict:
-        import requests
-
-        token = self.credential.get_token(FABRIC_SCOPE).token
-        response = requests.patch(
-            f"{FABRIC_API}{path}",
-            headers={"Authorization": f"Bearer {token}"},
-            json=payload,
-            timeout=60,
-        )
-        response.raise_for_status()
-        return response.json()
-
-    def run_item_job(self, workspace_id: str, item_id: str, job_type: str) -> tuple[str, int]:
-        import requests
-
-        token = self.credential.get_token(FABRIC_SCOPE).token
-        response = requests.post(
-            f"{FABRIC_API}/workspaces/{workspace_id}/items/{item_id}/jobs/instances",
-            headers={"Authorization": f"Bearer {token}"},
-            params={"jobType": job_type},
-            timeout=60,
-        )
-        response.raise_for_status()
-        location = response.headers.get("Location")
-        if not location:
-            raise RuntimeError("Fabric accepted the job but returned no Location header")
-        retry_after = int(response.headers.get("Retry-After", "5"))
-        return urlsplit(location).path.removeprefix("/v1"), retry_after
-
-    def verify_application_identity(self, expected_client_id: str) -> None:
-        token = self.credential.get_token(FABRIC_SCOPE).token
-        payload = token.split(".")[1]
-        payload += "=" * (-len(payload) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(payload))
-        actual_client_id = claims.get("appid") or claims.get("azp")
-        if not actual_client_id or actual_client_id.lower() != expected_client_id.lower():
-            raise ValueError(
-                "Pipeline ownership requires the configured service principal token; "
-                f"expected {expected_client_id}, received {actual_client_id or '(user token)'}"
-            )
 
     def resolve_workspace_id(self, display_name: str) -> str:
         workspaces = self.get("/workspaces").get("value", [])
@@ -263,68 +216,6 @@ def select_items_to_publish(
     )
 
 
-def set_pipeline_run_identity(
-    repository_items: list[tuple[str, str, Path]],
-    workspace_ids: list[str],
-    api: FabricApi,
-    client_id: str,
-) -> None:
-    api.verify_application_identity(client_id)
-    pipeline_names = sorted(
-        display_name
-        for item_type, display_name, _path in repository_items
-        if item_type == "DataPipeline"
-    )
-    description = f"Notebook activities run as service principal {client_id}."
-    for workspace_id in dict.fromkeys(workspace_ids):
-        for display_name in pipeline_names:
-            pipeline_id = api.resolve_item_id(workspace_id, display_name, "DataPipeline")
-            api.patch(
-                f"/workspaces/{workspace_id}/dataPipelines/{pipeline_id}",
-                {"description": description},
-            )
-            print(
-                f"Set {display_name} LastModifiedBy to service principal {client_id} "
-                f"in workspace {workspace_id}"
-            )
-
-
-def verify_pipeline_runs(
-    repository_items: list[tuple[str, str, Path]],
-    workspace_ids: list[str],
-    api: FabricApi,
-    client_id: str,
-) -> None:
-    api.verify_application_identity(client_id)
-    pipeline_names = sorted(
-        display_name
-        for item_type, display_name, _path in repository_items
-        if item_type == "DataPipeline"
-    )
-    terminal_states = {"Completed", "Failed", "Cancelled", "Deduped"}
-    for workspace_id in dict.fromkeys(workspace_ids):
-        for display_name in pipeline_names:
-            pipeline_id = api.resolve_item_id(workspace_id, display_name, "DataPipeline")
-            job_path, retry_after = api.run_item_job(workspace_id, pipeline_id, "Pipeline")
-            print(f"Started {display_name} as service principal {client_id} in workspace {workspace_id}")
-            time.sleep(retry_after)
-            while True:
-                job = api.get(job_path)
-                status = job.get("status")
-                if status in terminal_states:
-                    break
-                time.sleep(30)
-            if status != "Completed":
-                raise RuntimeError(
-                    f"{display_name} finished with status {status} in workspace {workspace_id}: "
-                    f"{json.dumps(job.get('failureReason'))}"
-                )
-            print(
-                f"Completed {display_name} as service principal {client_id} "
-                f"in workspace {workspace_id}; job {job.get('id')}"
-            )
-
-
 def main() -> None:
     from azure.identity import AzureCliCredential
     from fabric_cicd import (
@@ -386,22 +277,6 @@ def main() -> None:
             print("No changed, missing, or environment-drifted Fabric items to publish")
     if args.remove_orphans:
         unpublish_all_orphan_items(workspace)
-    if args.pipeline_run_client_id:
-        set_pipeline_run_identity(
-            repository_items,
-            [dev_workspace_id, target_workspace_id],
-            api,
-            args.pipeline_run_client_id,
-        )
-    if args.verify_pipeline_runs:
-        if not args.pipeline_run_client_id:
-            raise ValueError("--verify-pipeline-runs requires --pipeline-run-client-id")
-        verify_pipeline_runs(
-            repository_items,
-            [dev_workspace_id, target_workspace_id],
-            api,
-            args.pipeline_run_client_id,
-        )
     print(f"Deployment to {args.target_workspace} completed")
 
 

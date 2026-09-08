@@ -3,7 +3,7 @@
   "metadata": {
     "type": "DataPipeline",
     "displayName": "PL_Refresh_Master",
-    "description": "Notebook activities run as service principal 2706a024-95ea-48bd-b789-b4630f13c72d."
+    "description": ""
   },
   "config": {
     "version": "2.0",

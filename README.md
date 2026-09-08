@@ -16,14 +16,9 @@ Bronze_LH ─ NB_01_Seed_Bronze        (inline sample data)
 ```
 
 `PL_Refresh_Master` runs the chain in order; `NB_03` refreshes `Gold_SM` right after writing the
-Gold tables (no separate model-refresh activity). GitHub API runs execute as the `fabric-rest`
-service principal, and the workflow sets it as the pipeline's last modifier for scheduled runs.
-Interactive runs use the person who selects **Run**. The Dataflow uses its separately configured
-connection credential.
-
-To verify the SPN runtime after a deployment, manually dispatch **Deploy Fabric production** with
-`verify_pipeline_runs` enabled. The OIDC job runs `PL_Refresh_Master` in Dev and then Prod and fails
-if either pipeline does not complete.
+Gold tables (no separate model-refresh activity). Each Notebook activity must use a Fabric Notebook
+connection authenticated as `fabric-rest` to run independently of the pipeline caller. The Dataflow
+uses its separately configured connection credential.
 
 ## Repo layout
 
@@ -370,7 +365,7 @@ Configure it once:
 
    | Workspace | Required role | Reason |
    | --- | --- | --- |
-   | `ws-FabricCICD-DEV` | **Contributor** | Resolves source IDs and becomes the pipeline's notebook execution identity. |
+   | `ws-FabricCICD-DEV` | **Viewer** | Resolves source item IDs. |
    | `ws-FabricCICD-PROD` | **Member** | Creates and updates Fabric items, including environment-specific Direct Lake definitions. |
 
    **Admin** in Prod is also sufficient but is not required for the current deployment workflow.
@@ -395,13 +390,12 @@ Key Vault managed private endpoint. GitHub checks out the repository with its bu
 deployment script authenticates to Fabric through OIDC. `NB_04` remains available for manual,
 in-Fabric deployment.
 
-After publication, the OIDC-authenticated `fabric-rest` SPN updates `PL_Refresh_Master` metadata in
-Dev and Prod. Fabric records that SPN as `LastModifiedBy`, so the pipeline's Notebook activities run
-under the SPN instead of the person who starts the pipeline. The deployment script rejects a user
-token for this step. This follows Microsoft's [pipeline owner tutorial](https://learn.microsoft.com/fabric/data-factory/set-pipeline-owner-tutorial)
-and [notebook security context](https://learn.microsoft.com/fabric/data-engineering/notebook-security-context)
-guidance. Any later user edit to the pipeline changes `LastModifiedBy`; the next production workflow
-run restores the SPN identity.
+Notebook runtime identity is configured on each activity under **Settings → Connection**; changing
+pipeline metadata is not an identity configuration. Microsoft documents
+[Notebook activities with service-principal or workspace-identity connections](https://learn.microsoft.com/fabric/data-factory/notebook-activity).
+An SPN connection requires a tenant ID, client ID, and service-principal key stored in Fabric. The
+current `fabric-rest` app is GitHub OIDC-only and has no key, so that connection cannot be created
+without deliberately adding a credential. Do not substitute the pipeline's `LastModifiedBy` value.
 
 ### What "only changed items" means
 
