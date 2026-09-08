@@ -22,15 +22,7 @@
 
 # CELL ********************
 
-# Fabric Notebook: NB_01_Seed_Bronze
-# Purpose: Create Bronze Delta tables from inline sample data (no external source needed)
-# Layer: Bronze — raw, source-oriented ingestion
-# ──────────────────────────────────────────────────────────────────
-# ⚠️ Set Bronze_LH as the DEFAULT lakehouse for this notebook (Lakehouses pane →
-#    pin Bronze_LH as default). Tables are written with single-part names so they
-#    land in the default lakehouse — this avoids the schema-enabled lakehouse parsing
-#    a two-part name like "Bronze_LH.production_raw" as schema.table ([SCHEMA_NOT_FOUND]).
-# ──────────────────────────────────────────────────────────────────────────
+# Seeds deterministic Bronze sample tables.
 
 # Cell 1 — Imports & Spark session
 from pyspark.sql import SparkSession
@@ -44,14 +36,11 @@ import random
 spark = SparkSession.builder.getOrCreate()
 print(f"Spark version: {spark.version}")
 
-# Shared seeding window for ALL three Bronze tables. Data is generated deterministically
-# (fixed random seeds below) so every run reproduces byte-identical Bronze tables — important
-# for a repeatable CI/CD demo. Sized so EACH Bronze table lands at 50k+ rows.
+# Shared deterministic seeding window.
 _SEED_START = date(2024, 1, 1)
 _SEED_DAYS  = 740                 # ~2 years of daily history
 
-# field -> (well_count, baseline oil_bbl, gas_mcf, water_bbl). Shared by the cost + schedule cells.
-# Well IDs are generated programmatically below, so well count per field is easy to scale.
+# field -> (well_count, baseline oil_bbl, gas_mcf, water_bbl)
 _field_profiles = {
     "Oseberg":        (9, 1150.0, 4200.0, 300.0),
     "Troll":          (8,  980.0, 6200.0, 150.0),
@@ -63,7 +52,6 @@ _field_profiles = {
     "Heidrun":        (8, 1320.0, 3400.0, 230.0),
 }
 
-# field -> list of generated well IDs (e.g. "OSE-001"), unique across all fields. Total = 68 wells.
 _field_wells = {
     _f: [f"{_f[:3].upper()}-{_i:03d}" for _i in range(1, _n + 1)]
     for _f, (_n, _o, _g, _w) in _field_profiles.items()
@@ -80,9 +68,7 @@ production_schema = StructType([
     StructField("status",    StringType(), True),
 ])
 
-# Generate one row per well per day across the seeding window. ~2% of well-days are Shut-in
-# (zero production, later filtered out in Silver) and ~4% are reduced-rate Maintenance; the rest
-# are Active with +/-8% daily noise around each field's baseline.
+# Generate one row per well per day.
 random.seed(42)
 production_rows = []
 for _d in range(_SEED_DAYS):
@@ -122,14 +108,11 @@ cost_schema = StructType([
     StructField("vendor",     StringType(), True),
 ])
 
-# One OPEX row per field per day BROKEN OUT across cost categories, plus occasional CAPEX events on
-# fields with a capital project. Generated deterministically (seed=7) so the cost table is
-# reproducible across runs. 8 fields x _SEED_DAYS x 10 categories keeps this well above 50k rows.
-_cost_opex_base = {       # TOTAL daily OPEX baseline per field (USD), split across the categories below
+# Daily OPEX baseline per field, split across categories.
+_cost_opex_base = {
     "Oseberg": 45000.0, "Troll": 62000.0, "Gullfaks": 38000.0, "Snorre": 19000.0,
     "Ekofisk": 71000.0, "Johan Sverdrup": 88000.0, "Grane": 27000.0, "Heidrun": 41000.0,
 }
-# (category department, share-of-daily-base) — shares sum to 1.0; each row uses a distinct department
 _opex_categories = [
     ("Operations",   0.22), ("Utilities",    0.18), ("Maintenance", 0.15),
     ("Process",      0.10), ("Supply Chain", 0.09), ("HR",          0.08),
@@ -141,7 +124,7 @@ _field_vendor = {
     "Snorre": "Internal", "Ekofisk": "Weatherford", "Johan Sverdrup": "Schlumberger",
     "Grane": "Halliburton", "Heidrun": "Baker Hughes",
 }
-_capex_projects = {       # fields with an active capital project (others are OPEX-only)
+_capex_projects = {
     "Gullfaks": "GF-Expansion", "Snorre": "SN-Upgrade", "Johan Sverdrup": "JS-Phase2",
     "Heidrun": "HD-Subsea", "Ekofisk": "EK-Revamp",
 }
@@ -183,8 +166,7 @@ schedule_schema = StructType([
     StructField("assigned_to",  StringType(), True),
 ])
 
-# Generate 50,000 scheduled activities scattered across fields and dates within the seeding window.
-# Deterministic (seed=13) so the schedule table is reproducible across runs.
+# Generate 50,000 deterministic scheduled activities.
 _activities = ["Well Inspection", "Maintenance Shutdown", "Subsea Survey", "Chemical Treatment",
                "Production Test", "Safety Audit", "Equipment Upgrade", "Routine Inspection",
                "Well Stimulation", "Pipeline Integrity Check"]
