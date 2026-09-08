@@ -313,11 +313,11 @@ Dev workspace or commit directly to `main` after the initial repository setup.
 
 ### GitHub Actions production setup
 
-The [production workflow](.github/workflows/deploy-production.yml) runs when a merge/push to `main`
-changes one of the Fabric source folders. It checks out the approved commit, signs in without a
-client secret by using GitHub OIDC, installs the pinned dependencies on the temporary runner,
-validates the source, and deploys to Prod. Documentation-only and automation-setup commits don't
-start a production deployment; use **Run workflow** for the first controlled test.
+The [production workflow](.github/workflows/deploy-production.yml) runs on every merge/push to
+`main`, so Fabric items can use any valid root folder name without maintaining path filters. It
+checks out the approved commit, signs in without a client secret by using GitHub OIDC, installs the
+pinned dependencies on the temporary runner, validates the source, and deploys to Prod.
+`fabric-cicd` compares the complete source with Prod and skips unchanged item definitions.
 
 Configure it once:
 

@@ -4,13 +4,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - "Bronze/**"
-      - "Deploy/**"
-      - "Gold/**"
-      - "Seed_Data/**"
-      - "Silver/**"
-      - "semanticlink.Environment/**"
   workflow_dispatch:
 
 permissions:
