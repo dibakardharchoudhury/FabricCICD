@@ -29,7 +29,6 @@ uses its separately configured connection credential.
 | `Gold/` | `Gold_LH`, `DF_Gold_PA`, `NB_03`, pipeline, model, and report |
 | `Deploy/NB_04_Deploy.Notebook/` | **Deploy tool** — publishes everything to a stage |
 | `semanticlink.Environment/` | Spark env (`fabric-cicd`, `semantic-link-labs`) |
-| `CICD_E2E_Verification.Lakehouse/` | Empty smoke-test item for create and update verification |
 
 Items are in **Fabric Git source format** — produced when you Git-connect a workspace and
 **commit from Fabric**.
@@ -321,7 +320,8 @@ The [production workflow](.github/workflows/deploy-production.yml) runs on every
 `main`, so Fabric items can use any valid root folder name without maintaining path filters. It
 checks out the approved commit, signs in without a client secret by using GitHub OIDC, installs the
 pinned dependencies on the temporary runner, validates the source, and deploys only changed,
-missing, or environment-drifted items to Prod.
+missing, or environment-drifted items to Prod. When a commit deletes an item's `.platform` file,
+the same run deletes only that matching Prod item; unrelated Fabric-managed items are preserved.
 
 Configure it once:
 
@@ -418,10 +418,9 @@ post-publish XMLA save.
 | Add `CICD_E2E_Verification.Lakehouse` | [Run 34244155478](https://github.com/dibakardharchoudhury/FabricCICD/actions/runs/34244155478) created it in Prod and published no other item. |
 | Change only its `.platform` description | [Run 34244500599](https://github.com/dibakardharchoudhury/FabricCICD/actions/runs/34244500599) updated the same Prod item ID and published no other item. |
 
-Item deletion is disabled in the automatic workflow. A file deletion in Git therefore does not
-delete the Prod item. Treat deletion as an explicit release operation: review the impact, run the
-workflow/script manually with orphan removal enabled, and verify that the source branch contains the
-complete desired state before deletion.
+Deletion is change-scoped: removing an item folder from Git deletes the target item with the same
+type and display name. The workflow does not use broad orphan removal, so Fabric-managed staging
+Lakehouses and other workspace-only operational items are not affected.
 
 ## Troubleshooting
 

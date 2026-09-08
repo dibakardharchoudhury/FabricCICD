@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import subprocess
 from typing import Any
 
 
@@ -79,6 +80,20 @@ class FabricApi:
         response.raise_for_status()
         return response.json()
 
+    def delete(self, path: str) -> bool:
+        import requests
+
+        token = self.credential.get_token(FABRIC_SCOPE).token
+        response = requests.delete(
+            f"{FABRIC_API}{path}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=60,
+        )
+        if response.status_code == 404:
+            return False
+        response.raise_for_status()
+        return True
+
     def resolve_workspace_id(self, display_name: str) -> str:
         workspaces = self.get("/workspaces").get("value", [])
         match = next(
@@ -114,6 +129,59 @@ def discover_items(repository_directory: Path) -> list[tuple[str, str, Path]]:
                 item_directories.append(directory)
         directories[:] = [name for name in directories if name not in item_directories]
     return items
+
+
+def discover_deleted_items(repository_directory: Path, git_compare_ref: str) -> list[tuple[str, str]]:
+    result = subprocess.run(
+        [
+            "git",
+            "diff",
+            "--name-only",
+            "--diff-filter=D",
+            git_compare_ref,
+            "HEAD",
+            "--",
+        ],
+        cwd=repository_directory,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    deleted_items: set[tuple[str, str]] = set()
+    for changed_path in result.stdout.splitlines():
+        if Path(changed_path).name != ".platform":
+            continue
+        for part in Path(changed_path).parts:
+            display_name, separator, item_type = part.rpartition(".")
+            if separator and item_type in SUPPORTED_ITEM_TYPES:
+                if display_name not in EXCLUDED_ITEM_NAMES:
+                    deleted_items.add((item_type, display_name))
+                break
+    return sorted(deleted_items)
+
+
+def delete_removed_items(
+    repository_directory: Path,
+    git_compare_ref: str,
+    target_workspace_id: str,
+    api: FabricApi,
+) -> None:
+    deleted_items = discover_deleted_items(repository_directory, git_compare_ref)
+    if not deleted_items:
+        print("No Git-removed Fabric items to delete")
+        return
+
+    target_items = api.get(f"/workspaces/{target_workspace_id}/items").get("value", [])
+    target_by_type_name = {
+        (item["type"], item["displayName"]): item["id"] for item in target_items
+    }
+    for item_type, display_name in deleted_items:
+        item_id = target_by_type_name.get((item_type, display_name))
+        if item_id is None:
+            print(f"Git-removed item already absent: {display_name}.{item_type}")
+            continue
+        api.delete(f"/workspaces/{target_workspace_id}/items/{item_id}")
+        print(f"Deleted Git-removed item: {display_name}.{item_type} ({item_id})")
 
 
 def generate_parameters(
@@ -275,6 +343,12 @@ def main() -> None:
             publish_all_items(workspace, items_to_include=items_to_publish)
         else:
             print("No changed, missing, or environment-drifted Fabric items to publish")
+    delete_removed_items(
+        repository_directory,
+        args.git_compare_ref,
+        target_workspace_id,
+        api,
+    )
     if args.remove_orphans:
         unpublish_all_orphan_items(workspace)
     print(f"Deployment to {args.target_workspace} completed")
