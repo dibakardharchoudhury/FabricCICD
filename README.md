@@ -321,13 +321,45 @@ pinned dependencies on the temporary runner, validates the source, and deploys t
 
 Configure it once:
 
-1. Create a Microsoft Entra app registration/service principal for GitHub deployment.
-2. Add a federated credential for this repository and the GitHub Environment named `production`.
-   Its subject is `repo:<github-owner>/<github-repository>:environment:production`.
+1. Create a Microsoft Entra app registration/service principal for GitHub deployment. This repository
+   uses the `fabric-rest` application:
+
+   | Identifier | Value |
+   | --- | --- |
+   | Application (client) ID | `2706a024-95ea-48bd-b789-b4630f13c72d` |
+   | Directory (tenant) ID | `ad340c84-1886-4202-a483-2da2cb9168eb` |
+   | Service principal object ID | `c1feeecc-0250-4a03-873a-b707fd90e902` |
+
+   Use the application/client ID for GitHub's `AZURE_CLIENT_ID`. Use the service principal object ID
+   when adding or checking Fabric workspace role assignments.
+2. Add the GitHub OIDC federated credential in **Microsoft Entra ID → App registrations →
+   fabric-rest → Certificates & secrets → Federated credentials → Add credential → GitHub Actions
+   deploying Azure resources**. Configure these exact values:
+
+   | Field | Value |
+   | --- | --- |
+   | Name | `github-fabriccicd-production` |
+   | Issuer | `https://token.actions.githubusercontent.com` |
+   | Subject | `repo:dibakardharchoudhury/FabricCICD:environment:production` |
+   | Audience | `api://AzureADTokenExchange` |
+
+   The subject must match the GitHub owner, repository name, and workflow `environment: production`
+   exactly, including case. Creating this trust requires an authorized application owner or an Entra
+   **Application Administrator**, **Cloud Application Administrator**, or **Global Administrator**.
+   Do not create or store a client secret; GitHub exchanges its OIDC token through this credential.
 3. In the Fabric Admin portal, enable **Service principals can use Fabric APIs**, preferably scoped to
    a security group containing only this deployment service principal.
-4. Add the service principal as **Member** or **Admin** of the Prod workspace. It also needs visibility
-   into the Dev workspace so the script can resolve the source item GUIDs used for parameterization.
+4. Add the service principal to both Fabric workspaces under **Manage access**. The least-privilege
+   assignments used by this repository are:
+
+   | Workspace | Required role | Reason |
+   | --- | --- | --- |
+   | `ws-FabricCICD-DEV` | **Viewer** | Resolves source item IDs used to generate environment parameter mappings. |
+   | `ws-FabricCICD-PROD` | **Member** | Creates and updates Fabric items and performs Direct Lake rebinding. |
+
+   **Admin** in Prod is also sufficient but is not required for the current deployment workflow.
+   Search for `fabric-rest` when adding access and verify that its application ID is
+   `2706a024-95ea-48bd-b789-b4630f13c72d`.
 5. In GitHub, create the `production` Environment under **Settings → Environments** and add these
    environment variables:
 
