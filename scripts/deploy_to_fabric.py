@@ -188,7 +188,6 @@ def rebind_direct_lake_models(
     dev_workspace_id: str,
     target_workspace_id: str,
     api: FabricApi,
-    credential: Any,
 ) -> None:
     from sempy_labs import directlake
 
@@ -218,7 +217,6 @@ def rebind_direct_lake_models(
             source_type="Lakehouse",
             source_workspace=target_workspace_id,
             use_sql_endpoint=False,
-            credential=credential,
         )
         print(f"Rebound {model_name} to {lakehouse_name} in the target workspace")
 
@@ -266,7 +264,6 @@ def main() -> None:
         dev_workspace_id,
         target_workspace_id,
         api,
-        credential,
     )
     print(f"Deployment to {args.target_workspace} completed")
 
