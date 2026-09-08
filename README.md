@@ -16,8 +16,14 @@ Bronze_LH ─ NB_01_Seed_Bronze        (inline sample data)
 ```
 
 `PL_Refresh_Master` runs the chain in order; `NB_03` refreshes `Gold_SM` right after writing the
-Gold tables (no separate model-refresh activity). Pipeline Notebook activities execute as the
-`fabric-rest` service principal; the Dataflow uses its separately configured connection credential.
+Gold tables (no separate model-refresh activity). GitHub API runs execute as the `fabric-rest`
+service principal, and the workflow sets it as the pipeline's last modifier for scheduled runs.
+Interactive runs use the person who selects **Run**. The Dataflow uses its separately configured
+connection credential.
+
+To verify the SPN runtime after a deployment, manually dispatch **Deploy Fabric production** with
+`verify_pipeline_runs` enabled. The OIDC job runs `PL_Refresh_Master` in Dev and then Prod and fails
+if either pipeline does not complete.
 
 ## Repo layout
 
