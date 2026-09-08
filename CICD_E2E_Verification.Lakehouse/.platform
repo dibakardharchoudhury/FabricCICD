@@ -3,7 +3,7 @@
   "metadata": {
     "type": "Lakehouse",
     "displayName": "CICD_E2E_Verification",
-    "description": "CI/CD creation verification v1"
+    "description": "CI/CD modification verification v2"
   },
   "config": {
     "version": "2.0",
