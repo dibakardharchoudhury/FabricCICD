@@ -16,7 +16,8 @@ Bronze_LH ─ NB_01_Seed_Bronze        (inline sample data)
 ```
 
 `PL_Refresh_Master` runs the chain in order; `NB_03` refreshes `Gold_SM` right after writing the
-Gold tables (no separate model-refresh activity).
+Gold tables (no separate model-refresh activity). Pipeline Notebook activities execute as the
+`fabric-rest` service principal; the Dataflow uses its separately configured connection credential.
 
 ## Repo layout
 
@@ -363,7 +364,7 @@ Configure it once:
 
    | Workspace | Required role | Reason |
    | --- | --- | --- |
-   | `ws-FabricCICD-DEV` | **Viewer** | Resolves source item IDs used to generate environment parameter mappings. |
+   | `ws-FabricCICD-DEV` | **Contributor** | Resolves source IDs and becomes the pipeline's notebook execution identity. |
    | `ws-FabricCICD-PROD` | **Member** | Creates and updates Fabric items, including environment-specific Direct Lake definitions. |
 
    **Admin** in Prod is also sufficient but is not required for the current deployment workflow.
@@ -387,6 +388,14 @@ GitHub Actions does **not** run `NB_04`, clone with the Key Vault PAT, or use th
 Key Vault managed private endpoint. GitHub checks out the repository with its built-in token and the
 deployment script authenticates to Fabric through OIDC. `NB_04` remains available for manual,
 in-Fabric deployment.
+
+After publication, the OIDC-authenticated `fabric-rest` SPN updates `PL_Refresh_Master` metadata in
+Dev and Prod. Fabric records that SPN as `LastModifiedBy`, so the pipeline's Notebook activities run
+under the SPN instead of the person who starts the pipeline. The deployment script rejects a user
+token for this step. This follows Microsoft's [pipeline owner tutorial](https://learn.microsoft.com/fabric/data-factory/set-pipeline-owner-tutorial)
+and [notebook security context](https://learn.microsoft.com/fabric/data-engineering/notebook-security-context)
+guidance. Any later user edit to the pipeline changes `LastModifiedBy`; the next production workflow
+run restores the SPN identity.
 
 ### What "only changed items" means
 
@@ -434,8 +443,8 @@ Fix in order:
 
 First deploy: `NB_03` creates the Gold tables from scratch; new Delta objects (esp.
 `field_kpi_facts`) take minutes to register in OneLake metadata before Direct Lake can frame them.
-This is **metadata-sync lag, not permissions**. `NB_03` retries ~28 min \u2014 let it run or re-run later.
-Steady-state runs overwrite data only and refresh first try.
+`NB_03` retries ~28 minutes. If it still fails, inspect the run diagnostics before distinguishing
+metadata propagation from an access problem. Steady-state runs preserve table identity.
 
 ### `NB_03_Aggregate_Gold` fails: `ModuleNotFoundError: No module named 'sempy_labs'`
 

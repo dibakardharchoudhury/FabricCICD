@@ -25,14 +25,7 @@
 
 # CELL ********************
 
-# Fabric Notebook: NB_02_Transform_Silver
-# Purpose: Clean, conform, and enrich Bronze tables → Silver layer
-# Layer: Silver — domain-oriented, de-duplicated, typed
-# This is the PRIMARY notebook for the CI/CD change demo
-# ─────────────────────────────────────────────────────────────────────────────
-# DEMO CHANGE: When demonstrating Git CI/CD, add the gor_ratio KPI in Cell 2
-# and commit — reviewers will see the exact code change in GitHub
-# ─────────────────────────────────────────────────────────────────────────────
+# Cleans and enriches Bronze tables into the Silver layer.
 
 # Cell 1 — Imports
 from pyspark.sql import SparkSession
@@ -48,19 +41,14 @@ df_prod_raw = spark.table("Bronze_LH.dbo.production_raw")
 
 df_silver_prod = (
     df_prod_raw
-    .filter(col("status") != "Shut-in")                         # Exclude shut-in wells
+    .filter(col("status") != "Shut-in")
     .withColumn("oil_bbl",       col("oil_bbl").cast("double"))
     .withColumn("gas_mcf",       col("gas_mcf").cast("double"))
     .withColumn("water_bbl",     col("water_bbl").cast("double"))
-    # ── KPIs ──────────────────────────────────────────────────────────────────
     .withColumn("boe_total",      _round(col("oil_bbl") + col("gas_mcf") * 0.17, 2))
     .withColumn("water_cut_pct",  _round(
         col("water_bbl") / (col("oil_bbl") + col("water_bbl") + 0.001) * 100, 2
     ))
-    # ── DEMO CI/CD CHANGE — add gor_ratio ─────────────────────────────────────
-    # When demonstrating CI/CD, uncomment the line below, run, and commit to Git
-    # .withColumn("gor_ratio",  _round(col("gas_mcf") / (col("oil_bbl") + 0.001), 3))
-    # ──────────────────────────────────────────────────────────────────────────
     .withColumn("is_active",  col("status") == "Active")
     .withColumn("transformed_at", current_timestamp())
     .drop("ingested_at", "source_system")
@@ -80,7 +68,6 @@ print(f"✅ Silver_LH.production_conformed: {count_prod} rows")
 df_cost_raw = spark.table("Bronze_LH.dbo.cost_raw")
 df_prod_silver = spark.table("Silver_LH.dbo.production_conformed")
 
-# Daily BOE by field for joining
 daily_boe = (
     df_prod_silver
     .groupBy("field", "date")

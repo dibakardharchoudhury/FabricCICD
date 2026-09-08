@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -46,6 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--environment", default="Production")
     parser.add_argument("--repository-directory", default=".")
     parser.add_argument("--git-compare-ref", default="HEAD~1")
+    parser.add_argument("--pipeline-run-client-id")
     parser.add_argument("--full-deploy", action="store_true")
     parser.add_argument("--remove-orphans", action="store_true")
     return parser.parse_args()
@@ -77,6 +80,31 @@ class FabricApi:
         )
         response.raise_for_status()
         return response.json()
+
+    def patch(self, path: str, payload: dict) -> dict:
+        import requests
+
+        token = self.credential.get_token(FABRIC_SCOPE).token
+        response = requests.patch(
+            f"{FABRIC_API}{path}",
+            headers={"Authorization": f"Bearer {token}"},
+            json=payload,
+            timeout=60,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def verify_application_identity(self, expected_client_id: str) -> None:
+        token = self.credential.get_token(FABRIC_SCOPE).token
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+        actual_client_id = claims.get("appid") or claims.get("azp")
+        if not actual_client_id or actual_client_id.lower() != expected_client_id.lower():
+            raise ValueError(
+                "Pipeline ownership requires the configured service principal token; "
+                f"expected {expected_client_id}, received {actual_client_id or '(user token)'}"
+            )
 
     def resolve_workspace_id(self, display_name: str) -> str:
         workspaces = self.get("/workspaces").get("value", [])
@@ -215,6 +243,32 @@ def select_items_to_publish(
     )
 
 
+def set_pipeline_run_identity(
+    repository_items: list[tuple[str, str, Path]],
+    workspace_ids: list[str],
+    api: FabricApi,
+    client_id: str,
+) -> None:
+    api.verify_application_identity(client_id)
+    pipeline_names = sorted(
+        display_name
+        for item_type, display_name, _path in repository_items
+        if item_type == "DataPipeline"
+    )
+    description = f"Notebook activities run as service principal {client_id}."
+    for workspace_id in dict.fromkeys(workspace_ids):
+        for display_name in pipeline_names:
+            pipeline_id = api.resolve_item_id(workspace_id, display_name, "DataPipeline")
+            api.patch(
+                f"/workspaces/{workspace_id}/dataPipelines/{pipeline_id}",
+                {"description": description},
+            )
+            print(
+                f"Set {display_name} LastModifiedBy to service principal {client_id} "
+                f"in workspace {workspace_id}"
+            )
+
+
 def main() -> None:
     from azure.identity import AzureCliCredential
     from fabric_cicd import (
@@ -276,6 +330,13 @@ def main() -> None:
             print("No changed, missing, or environment-drifted Fabric items to publish")
     if args.remove_orphans:
         unpublish_all_orphan_items(workspace)
+    if args.pipeline_run_client_id:
+        set_pipeline_run_identity(
+            repository_items,
+            [dev_workspace_id, target_workspace_id],
+            api,
+            args.pipeline_run_client_id,
+        )
     print(f"Deployment to {args.target_workspace} completed")
 
 
