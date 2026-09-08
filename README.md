@@ -44,6 +44,61 @@ Do not configure the Dataflow destination while every Lakehouse is empty. Its so
 `Silver_LH.dbo.production_conformed`; until that table exists, Fabric shows **"source query did not
 return a table"**, cannot calculate column mappings, and disables **Save settings**.
 
+### Key Vault private networking prerequisite
+
+`NB_04_Deploy` is the **only tracked notebook in this repository that reads Azure Key Vault**. It
+calls `notebookutils.credentials.getSecret(...)` to retrieve the GitHub PAT before cloning the repo
+when it runs inside Fabric. `NB_01`, `NB_02`, and `NB_03` do not read Key Vault.
+
+If the Key Vault blocks public network access, create a Fabric **managed private endpoint** to that
+vault in every workspace where `NB_04_Deploy` can execute. Managed private endpoints are workspace
+scoped; an endpoint created in Dev is not inherited by Test or Prod.
+
+| Workspace | Key Vault endpoint required? |
+| --- | --- |
+| Dev | Yes, when `NB_04_Deploy` runs in Dev |
+| Test | Yes, when `NB_04_Deploy` runs in Test |
+| Prod | Yes, when `NB_04_Deploy` runs in Prod |
+| Target-only workspace | No, if `NB_04_Deploy` runs elsewhere and only publishes into this workspace |
+| Local machine / CI runner | No Fabric endpoint; the checked-out repo is used and Key Vault cloning is skipped |
+
+For a consistent Dev/Test/Prod operating model, provision and approve the endpoint in all three
+workspaces before the first deployment:
+
+1. In Azure, confirm the `Microsoft.Network` resource provider is registered in the subscription.
+2. Copy the Key Vault resource ID from **Azure portal → Key Vault → Properties**. Its format is:
+
+   ```text
+   /subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.KeyVault/vaults/<vault-name>
+   ```
+
+3. In the Fabric **Dev** workspace, open **Workspace settings → Network security → Managed private
+   endpoints → Create**.
+4. Enter a unique endpoint name, paste the Key Vault resource ID, and create the request. Use the
+   Azure resource ID, not the `https://<vault-name>.vault.azure.net/` URL.
+5. In Azure, open **Key Vault → Networking → Private endpoint connections**, select the pending
+   Fabric request, and approve it.
+6. Return to the Fabric workspace's **Network security** page, refresh it, and wait until provisioning
+   is successful and the connection status is **Approved**. A created or pending endpoint is not ready.
+7. Repeat Steps 3–6 independently for **Test** and **Prod**. The same Key Vault then has three private
+   endpoint connections, one from each Fabric workspace.
+8. Grant the identity that actually runs `NB_04_Deploy` permission to read the PAT secret. With Azure
+   RBAC, use the least-privilege **Key Vault Secrets User** role; with legacy access policies, grant
+   secret **Get** permission. Network approval and secret authorization are both required.
+9. In each execution workspace, run this preflight without printing the secret:
+
+   ```python
+   notebookutils.credentials.getSecret(
+       "https://<vault-name>.vault.azure.net/",
+       "<github-pat-secret-name>",
+   )
+   print("Key Vault network and secret access succeeded")
+   ```
+
+Do not run `NB_04_Deploy` in a workspace until this preflight succeeds there. If a pipeline or service
+account submits the notebook, grant access to that submitting identity and test in that execution
+context; an interactive test under a different user does not validate the pipeline identity.
+
 ### Part A — Set up a fresh Dev workspace from Git
 
 1. **Fork and connect the repo.** Fork this repository, create/open the Dev workspace, and connect
@@ -133,9 +188,11 @@ return a table"**, cannot calculate column mappings, and disables **Save setting
 2. **Commit from Fabric to Git.** Commit the validated Dev item definitions to your fork. Table data is
    never committed; only item and Lakehouse definitions are stored in Git.
 
-3. **Prepare deployment authentication.** The identity running `NB_04_Deploy` must be Admin/Member on
-   both Dev and the target workspace. For an in-Fabric run, store a fine-grained, repo-scoped GitHub PAT
-   in Azure Key Vault. A local/CI run can use the existing checkout and does not need the PAT.
+3. **Prepare deployment authentication and networking.** The identity running `NB_04_Deploy` must be
+   Admin/Member on both Dev and the target workspace. For an in-Fabric run, store a fine-grained,
+   repo-scoped GitHub PAT in Azure Key Vault, complete the **Key Vault private networking prerequisite**
+   above for the workspace running the notebook, and pass its preflight. A local/CI run can use the
+   existing checkout and does not need the PAT or a Fabric managed private endpoint.
 
 4. **Create an empty target workspace.** For example, create `ws-CICD-PROD`. Do not manually create
    its Fabric items; `NB_04_Deploy` creates them from Git.
@@ -224,6 +281,9 @@ Edit in **Dev** → **commit from Fabric** → re-run `NB_04_Deploy` (only chang
 - **Direct Lake on OneLake** can't be rebound by a deployment rule, so `NB_04` does it in code (`semantic-link-labs`; Admin/Member suffices).
 - **The `DF_Gold_PA` credential isn't deployed** — follow the one-time source/destination setup in
   Part A for Dev and Part B for each deployment target.
+- **Only `NB_04_Deploy` reads Key Vault in the tracked solution.** A private Key Vault requires one
+   approved managed private endpoint per Fabric workspace where that notebook executes, plus secret
+   read permission for the submitting identity.
 - **`parameter.yml` is generated at deploy time**, not checked in — keep `generate_parameter_yml = True`.
 - Items pair across stages by **name** — keep display names identical.
 
