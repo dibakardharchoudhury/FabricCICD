@@ -27,6 +27,7 @@ Gold tables (no separate model-refresh activity).
 | `Gold/` | `Gold_LH`, `DF_Gold_PA`, `NB_03`, pipeline, model, and report |
 | `Deploy/NB_04_Deploy.Notebook/` | **Deploy tool** — publishes everything to a stage |
 | `semanticlink.Environment/` | Spark env (`fabric-cicd`, `semantic-link-labs`) |
+| `CICD_E2E_Verification.Lakehouse/` | Empty smoke-test item for create and update verification |
 
 Items are in **Fabric Git source format** — produced when you Git-connect a workspace and
 **commit from Fabric**.
@@ -258,7 +259,8 @@ automatically.
 
 ## Change loop
 
-Edit in **Dev** → **commit from Fabric** → re-run `NB_04_Deploy` (only changed items update).
+Edit in **Dev** → **commit from Fabric** → merge to `main` → GitHub deploys only affected items.
+Use `NB_04_Deploy` for a manual in-Fabric deployment.
 
 ## Key NB_04 parameters
 
@@ -399,6 +401,13 @@ IDs, dataflow source/destination IDs, pipeline logical item references, and zero
 resolve to their Prod counterparts. Direct Lake on OneLake models receive both the Prod workspace ID
 and matching Prod lakehouse ID in the same semantic-model publish transaction; there is no separate
 post-publish XMLA save.
+
+### Verified smoke tests
+
+| Case | Result |
+| --- | --- |
+| Add `CICD_E2E_Verification.Lakehouse` | [Run 34244155478](https://github.com/dibakardharchoudhury/FabricCICD/actions/runs/34244155478) created it in Prod and published no other item. |
+| Change only its `.platform` description | [Run 34244500599](https://github.com/dibakardharchoudhury/FabricCICD/actions/runs/34244500599) updated the same Prod item ID and published no other item. |
 
 Item deletion is disabled in the automatic workflow. A file deletion in Git therefore does not
 delete the Prod item. Treat deletion as an explicit release operation: review the impact, run the
