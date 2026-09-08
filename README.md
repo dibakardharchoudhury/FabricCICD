@@ -194,7 +194,7 @@ context; an interactive test under a different user does not validate the pipeli
    above for the workspace running the notebook, and pass its preflight. A local/CI run can use the
    existing checkout and does not need the PAT or a Fabric managed private endpoint.
 
-4. **Create an empty target workspace.** For example, create `ws-CICD-PROD`. Do not manually create
+4. **Create an empty target workspace.** For example, create `ws-FabricCICD-PROD`. Do not manually create
    its Fabric items; `NB_04_Deploy` creates them from Git.
 
 5. **Run `NB_04_Deploy`.** In its parameters section, set:
@@ -264,9 +264,9 @@ Edit in **Dev** → **commit from Fabric** → re-run `NB_04_Deploy` (only chang
 
 | Parameter | Default | Purpose |
 | --- | --- | --- |
-| `target_workspace_name` | `ws-CICD-PROD` | Stage to deploy into |
+| `target_workspace_name` | `ws-FabricCICD-PROD` | Stage to deploy into |
 | `environment` | `Production` | Stage label used by `parameter.yml` |
-| `dev_workspace_name` | `ws-CICD-DevTest` | Source workspace (GUIDs → tokens) |
+| `dev_workspace_name` | `ws-FabricCICD-DEV` | Source workspace (GUIDs → tokens) |
 | `generate_parameter_yml` | `True` | Auto-build `parameter.yml` from the repo |
 | `rebind_direct_lake` | `True` | Re-point Direct Lake models to the target lakehouse |
 | `include_lakehouses` | `True` | Deploy lakehouses from the repo |
@@ -286,6 +286,78 @@ Edit in **Dev** → **commit from Fabric** → re-run `NB_04_Deploy` (only chang
    read permission for the submitting identity.
 - **`parameter.yml` is generated at deploy time**, not checked in — keep `generate_parameter_yml = True`.
 - Items pair across stages by **name** — keep display names identical.
+
+## Team development and automatic production deployment
+
+Use `main` as the protected integration and release branch. Do not develop directly in the shared
+Dev workspace or commit directly to `main` after the initial repository setup.
+
+### Developer workflow
+
+1. Start from the shared Dev workspace connected to `main`, and make sure it is synchronized from Git.
+2. In Fabric source control, use **Branch out to new workspace** to create a short-lived
+   `feature/<work-item>` branch and a dedicated feature workspace. One workspace can connect to only
+   one branch, so each developer changes and tests items in that isolated workspace.
+3. Run the feature workspace end to end. Lakehouse table data and Dataflow credentials aren't copied
+   through Git, so bootstrap them as described in Part A when the feature requires executable data.
+4. Commit from the feature workspace to its feature branch. Never commit secrets or the insecure
+   deployment notebook.
+5. Open a pull request from `feature/<work-item>` to `main`. The **Validate Fabric pull request**
+   workflow checks Python syntax, JSON item definitions, and required Fabric item files.
+6. Require at least one approving review and require the validation check through the GitHub `main`
+   branch protection/ruleset. Disable direct pushes to `main`.
+7. After the PR merges, delete the feature branch and its temporary Fabric workspace, or clean and
+   reuse a developer workspace by reconnecting it to a new branch created from current `main`.
+8. Update the shared Dev workspace from Git after merges so the next feature branches from the latest
+   integrated definitions.
+
+### GitHub Actions production setup
+
+The [production workflow](.github/workflows/deploy-production.yml) runs when a merge/push to `main`
+changes one of the Fabric source folders. It checks out the approved commit, signs in without a
+client secret by using GitHub OIDC, installs the pinned dependencies on the temporary runner,
+validates the source, and deploys to Prod. Documentation-only and automation-setup commits don't
+start a production deployment; use **Run workflow** for the first controlled test.
+
+Configure it once:
+
+1. Create a Microsoft Entra app registration/service principal for GitHub deployment.
+2. Add a federated credential for this repository and the GitHub Environment named `production`.
+   Its subject is `repo:<github-owner>/<github-repository>:environment:production`.
+3. In the Fabric Admin portal, enable **Service principals can use Fabric APIs**, preferably scoped to
+   a security group containing only this deployment service principal.
+4. Add the service principal as **Member** or **Admin** of the Prod workspace. It also needs visibility
+   into the Dev workspace so the script can resolve the source item GUIDs used for parameterization.
+5. In GitHub, create the `production` Environment under **Settings → Environments** and add these
+   environment variables:
+
+   | Variable | Value |
+   | --- | --- |
+   | `AZURE_CLIENT_ID` | Entra application/client ID |
+   | `AZURE_TENANT_ID` | Entra tenant ID |
+   | `FABRIC_DEV_WORKSPACE` | Shared Dev workspace name, for example `ws-FabricCICD-DEV` |
+   | `FABRIC_PROD_WORKSPACE` | Production workspace name, for example `ws-FabricCICD-PROD` |
+
+6. Optionally configure required reviewers on the GitHub `production` Environment for a second
+   release approval after the PR approval. Without environment reviewers, deployment starts
+   automatically as soon as the approved PR merges.
+
+GitHub Actions does **not** run `NB_04`, clone with the Key Vault PAT, or use the Fabric workspace's
+Key Vault managed private endpoint. GitHub checks out the repository with its built-in token and the
+deployment script authenticates to Fabric through OIDC. `NB_04` remains available for manual,
+in-Fabric deployment.
+
+### What "only changed items" means
+
+The workflow intentionally gives `fabric-cicd` the complete set of item types present in the repo.
+`publish_all_items()` compares the Git definitions with Prod, creates missing items, updates changed
+items, and skips unchanged items. This is safer than converting `git diff` paths into an allow-list:
+dependent definitions and environment-specific GUID replacement remain available during deployment.
+
+Item deletion is disabled in the automatic workflow. A file deletion in Git therefore does not
+delete the Prod item. Treat deletion as an explicit release operation: review the impact, run the
+workflow/script manually with orphan removal enabled, and verify that the source branch contains the
+complete desired state before deletion.
 
 ## Troubleshooting
 

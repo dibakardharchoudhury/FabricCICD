@@ -1,2 +1,5 @@
 NB_04_Deploy_NOTSECURE.Notebook/
 NB_04_Deploy_NOTSECURE.Notebook.zip
+parameter.yml
+__pycache__/
+*.py[cod]

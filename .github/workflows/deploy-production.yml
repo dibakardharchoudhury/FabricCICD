@@ -1,0 +1,58 @@
+name: Deploy Fabric production
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "Bronze/**"
+      - "Deploy/**"
+      - "Gold/**"
+      - "Seed_Data/**"
+      - "Silver/**"
+      - "semanticlink.Environment/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: fabric-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 90
+    steps:
+      - name: Check out approved main commit
+        uses: actions/checkout@v4
+
+      - name: Sign in to Azure with GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-deploy.txt
+
+      - name: Install deployment dependencies
+        run: python -m pip install --requirement requirements-deploy.txt
+
+      - name: Validate approved source
+        run: python scripts/validate_repository.py
+
+      - name: Deploy changed Fabric definitions
+        run: >-
+          python scripts/deploy_to_fabric.py
+          --target-workspace "${{ vars.FABRIC_PROD_WORKSPACE }}"
+          --dev-workspace "${{ vars.FABRIC_DEV_WORKSPACE }}"
+          --environment Production
