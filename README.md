@@ -2,8 +2,8 @@
 
 This repository promotes a Bronze -> Silver -> Gold Microsoft Fabric solution with
 [`fabric-cicd`](https://microsoft.github.io/fabric-cicd/). GitHub Actions dynamically deploys the
-OIDC-owned Fabric items without a GitHub PAT, client secret, or checked-in environment parameter
-file. NB04 and its refresh pipeline use a separate administrator-authenticated deployment lane.
+Fabric items with a GitHub OIDC service principal, without a GitHub PAT, client secret, or
+checked-in environment parameter file.
 
 ## Data flow
 
@@ -23,10 +23,9 @@ NB_04_SemanticModelReBindRefresh -> Gold_SM (Direct Lake) -> Gold_Dashboard
 2. `NB_02_Transform_Silver`
 3. `NB_03_Aggregate_Gold`
 
-NB03 writes the Gold tables. `PL_SemanticModel_Rebind_Refresh` then runs NB04 to validate the Gold
-tables, rebind `Gold_SM` to the current workspace's `Gold_LH`, and perform a full model refresh. Both
-pipeline definitions are grouped under `Pipelines/`; the older native `PL_Refresh_SemanticModel`
-pipeline has been removed.
+NB03 writes the Gold tables. Run NB04 interactively to validate the Gold tables, rebind `Gold_SM`
+to the current workspace's `Gold_LH`, and perform a full model refresh. The obsolete dedicated
+semantic model refresh pipelines have been removed.
 
 ## Repository layout
 
@@ -35,7 +34,7 @@ pipeline has been removed.
 | `Bronze/` | Bronze Lakehouse and seed notebook |
 | `Silver/` | Silver Lakehouse and transform notebook |
 | `Gold/` | Gold Lakehouse, aggregate and refresh notebooks, semantic model, and report |
-| `Pipelines/` | Master data pipeline and semantic model refresh pipeline |
+| `Pipelines/` | Master data pipeline |
 | `semanticlink.Environment/` | Pinned Semantic Link runtime libraries |
 | `scripts/deploy_to_fabric.py` | Dynamic OIDC deployment implementation |
 | `scripts/validate_repository.py` | Source and pipeline contract validation |
@@ -53,25 +52,9 @@ The deployer resolves both workspace IDs by display name at runtime. It then:
 4. Replaces the current-workspace placeholder with the target workspace ID.
 5. Replaces pipeline logical item IDs with target item IDs.
 6. Replaces source Lakehouse IDs with target Lakehouse IDs.
-7. Publishes every changed, new, missing, or environment-drifted OIDC-owned item.
+7. Publishes every changed, new, missing, or environment-drifted Fabric item.
 8. Deletes only Fabric items whose `.platform` file was deleted in the compared Git range.
 9. Removes `parameter.yml` on process exit, including failed deployments.
-
-`NB_04_SemanticModelReBindRefresh` and `PL_SemanticModel_Rebind_Refresh` must be created and updated
-only as `admin@mngenvmcap218279.onmicrosoft.com`. The OIDC lane excludes them from publication and
-deletion. Publish only those two from an Azure CLI session authenticated as that administrator:
-
-```powershell
-.venv\Scripts\python.exe scripts\deploy_to_fabric.py `
-    --target-workspace ws-FabricCICD-PROD `
-    --dev-workspace ws-FabricCICD-DEV `
-    --environment Production `
-    --repository-directory . `
-    --admin-owned-only
-```
-
-The command verifies both the user's Entra UPN and object ID before publishing. It publishes only
-NB04 and `PL_SemanticModel_Rebind_Refresh`.
 
 The source references have separate meanings:
 
@@ -87,9 +70,8 @@ untracked `parameter.yml`.
 
 The [production workflow](.github/workflows/deploy-production.yml) runs on pushes to `main` and can
 also be dispatched manually. Push runs publish the Git delta plus missing or environment-drifted
-OIDC items and apply their Git deletions. Manual runs fully reconcile all dynamically discovered
-OIDC-owned items. They never publish NB04 or `PL_SemanticModel_Rebind_Refresh` as the service
-principal. Configure a GitHub `production` Environment with:
+Fabric items and apply their Git deletions. Manual runs fully reconcile all dynamically discovered
+Fabric items. Configure a GitHub `production` Environment with:
 
 | Variable | Purpose |
 | --- | --- |
@@ -113,12 +95,9 @@ Notebook connection.
 5. Merge the approved pull request into `main`.
 6. Let `.github/workflows/deploy-production.yml` deploy Production.
 7. Run `PL_Refresh_Master` in Production and verify all three activities.
-8. Run `PL_SemanticModel_Rebind_Refresh` and verify it completes.
+8. Open NB04 in Production and run it interactively to rebind and refresh `Gold_SM`.
 
-Use `--full-deploy` for complete reconciliation of OIDC-owned items. Use `--admin-owned-only` for
-NB04 and its pipeline under the designated administrator. A fully automated GitHub deployment of
-both lanes requires a self-hosted runner authenticated as that administrator; GitHub OIDC cannot
-issue a delegated token for an Entra user.
+Use `--full-deploy` for complete reconciliation of all dynamically discovered Fabric items.
 
 ## Fresh workspace validation
 
@@ -131,9 +110,9 @@ first deployment, run `PL_Refresh_Master` and verify:
 | `Silver_LH.dbo` | `production_conformed`, `cost_conformed`, `schedule_conformed` |
 | `Gold_LH.dbo` | `production_daily`, `cost_monthly`, `schedule_summary`, `field_kpi_facts` |
 
-After the master pipeline succeeds, run `PL_SemanticModel_Rebind_Refresh`. NB04 uses the same
-dynamic `Gold_LH` and `semanticlink` dependencies as NB03, rebinds the model, and retries the
-observed transient Direct Lake framing failure before reporting success.
+After the master pipeline succeeds, run NB04 interactively. It uses the same dynamic `Gold_LH` and
+`semanticlink` dependencies as NB03, rebinds the model, and retries the observed transient Direct
+Lake framing failure before reporting success.
 
 ### Manual refresh fallback
 
@@ -152,8 +131,8 @@ detailed refresh diagnostics.
 
 ### Scheduled refresh alternative
 
-If the dedicated refresh pipeline is intentionally disabled, Production can use the semantic
-model's own refresh schedule:
+Production can use the semantic model's own refresh schedule instead of running NB04 for routine
+refreshes after the initial rebind:
 
 1. Open `Gold_SM` in the Production workspace and select **Settings**.
 2. Open **Refresh** or **Scheduled refresh**, enable the schedule, and set the time zone and desired
@@ -162,7 +141,7 @@ model's own refresh schedule:
     buffer in addition to notebook runtime and first-run table creation.
 4. Save the schedule and monitor both pipeline history and semantic model refresh history separately.
 
-Do not run this schedule at the same time as `PL_SemanticModel_Rebind_Refresh`.
+Do not run this schedule while NB04 is performing an interactive refresh.
 
 ## Troubleshooting
 
@@ -179,8 +158,8 @@ validator rejects missing notebook terminators so this malformed source cannot b
 
 ### Gold_SM is not current after the master pipeline
 
-NB03 only writes Gold tables. Run `PL_SemanticModel_Rebind_Refresh`, then check its run history and
-the semantic model refresh history.
+NB03 only writes Gold tables. Run NB04 interactively, then check the notebook output and semantic
+model refresh history.
 
 ### First Direct Lake frame reports `0xC14700DF`
 

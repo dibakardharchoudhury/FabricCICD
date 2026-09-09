@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import atexit
-import base64
 import json
 import os
 from pathlib import Path
@@ -42,15 +41,6 @@ SUPPORTED_ITEM_TYPES = {
     "VariableLibrary",
     "Warehouse",
 }
-ADMIN_OWNED_ITEMS = {
-    ("Notebook", "NB_04_SemanticModelReBindRefresh"),
-    ("DataPipeline", "PL_SemanticModel_Rebind_Refresh"),
-}
-OIDC_EXCLUDED_ITEMS = ADMIN_OWNED_ITEMS
-ADMIN_UPN = "admin@mngenvmcap218279.onmicrosoft.com"
-ADMIN_OBJECT_ID = "7ab1a6b2-d2e6-41b8-92ba-1fb3a8ba5bc0"
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-workspace", required=True)
@@ -60,7 +50,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--git-compare-ref", default="HEAD~1")
     parser.add_argument("--full-deploy", action="store_true")
     parser.add_argument("--remove-orphans", action="store_true")
-    parser.add_argument("--admin-owned-only", action="store_true")
     return parser.parse_args()
 
 
@@ -228,7 +217,6 @@ def delete_removed_items(
     git_compare_ref: str,
     target_workspace_id: str,
     api: FabricApi,
-    admin_owned_only: bool,
 ) -> None:
     deleted_items = discover_deleted_items(repository_directory, git_compare_ref)
     if not deleted_items:
@@ -240,13 +228,6 @@ def delete_removed_items(
         (item["type"], item["displayName"]): item["id"] for item in target_items
     }
     for item_type, display_name in deleted_items:
-        is_admin_owned = (item_type, display_name) in ADMIN_OWNED_ITEMS
-        if admin_owned_only and not is_admin_owned:
-            print(f"Skipping OIDC-owned deletion in administrator mode: {display_name}.{item_type}")
-            continue
-        if not admin_owned_only and is_admin_owned:
-            print(f"Skipping administrator-owned deletion in OIDC mode: {display_name}.{item_type}")
-            continue
         item_id = target_by_type_name.get((item_type, display_name))
         if item_id is None:
             print(f"Git-removed item already absent: {display_name}.{item_type}")
@@ -346,21 +327,7 @@ def select_items_to_publish(
             selected.add(f"{display_name}.{item_type}")
             print(f"Selected {display_name}.{item_type}: its connection still points to Dev")
 
-    return sorted(
-        item
-        for item in selected
-        if tuple(reversed(item.rsplit(".", 1))) not in OIDC_EXCLUDED_ITEMS
-    )
-
-
-def verify_admin_identity(credential: Any) -> None:
-    token = credential.get_token(FABRIC_SCOPE).token
-    encoded_claims = token.split(".")[1]
-    claims = json.loads(base64.urlsafe_b64decode(encoded_claims + "=" * (-len(encoded_claims) % 4)))
-    upn = claims.get("upn") or claims.get("preferred_username")
-    if claims.get("oid", "").lower() != ADMIN_OBJECT_ID or upn.lower() != ADMIN_UPN.lower():
-        raise PermissionError(f"Administrator-owned deployment requires Azure CLI user {ADMIN_UPN}")
-    print(f"Verified administrator identity: {upn} ({claims['oid']})")
+    return sorted(selected)
 
 
 def main() -> None:
@@ -380,17 +347,7 @@ def main() -> None:
     target_workspace_id = api.resolve_workspace_id(args.target_workspace)
     print(f"Dev workspace: {args.dev_workspace} ({dev_workspace_id})")
     print(f"Target workspace: {args.target_workspace} ({target_workspace_id})")
-    all_repository_items = discover_items(repository_directory)
-    repository_items = all_repository_items
-    if args.admin_owned_only:
-        verify_admin_identity(credential)
-        repository_items = [
-            item for item in repository_items if (item[0], item[1]) in ADMIN_OWNED_ITEMS
-        ]
-    else:
-        repository_items = [
-            item for item in repository_items if (item[0], item[1]) not in OIDC_EXCLUDED_ITEMS
-        ]
+    repository_items = discover_items(repository_directory)
     remove_generated_item_artifacts(repository_items)
     item_types = sorted(
         {item_type for item_type, _name, _path in repository_items if item_type != "VariableLibrary"}
@@ -402,7 +359,7 @@ def main() -> None:
     atexit.register(parameter_file.unlink, missing_ok=True)
     generate_parameters(
         repository_directory,
-        all_repository_items,
+        repository_items,
         dev_workspace_id,
         args.environment,
         api,
@@ -415,20 +372,14 @@ def main() -> None:
         token_credential=credential,
     )
     print(f"Comparing {len(repository_items)} source items with {args.target_workspace}")
-    if args.admin_owned_only:
-        append_feature_flag("enable_experimental_features")
-        append_feature_flag("enable_items_to_include")
-        admin_items = sorted(f"{name}.{item_type}" for item_type, name, _path in repository_items)
-        print(f"Publishing administrator-owned items as {ADMIN_UPN}: " + ", ".join(admin_items))
-        publish_all_items(workspace, items_to_include=admin_items)
-    elif args.full_deploy:
+    if args.full_deploy:
         append_feature_flag("enable_experimental_features")
         append_feature_flag("enable_items_to_include")
         reconciliation_items = sorted(
             f"{name}.{item_type}" for item_type, name, _path in repository_items
         )
         print(
-            "Full reconciliation requested; publishing all dynamically discovered OIDC-owned items: "
+            "Full reconciliation requested; publishing all dynamically discovered Fabric items: "
             + ", ".join(reconciliation_items)
         )
         publish_all_items(workspace, items_to_include=reconciliation_items)
@@ -453,7 +404,6 @@ def main() -> None:
         args.git_compare_ref,
         target_workspace_id,
         api,
-        args.admin_owned_only,
     )
     if args.remove_orphans:
         unpublish_all_orphan_items(workspace)

@@ -33,7 +33,6 @@ EXPECTED_GOLD_SNIPPETS = {
     '_write_gold(df_kpi_facts, "field_kpi_facts")',
 }
 REFRESH_NOTEBOOK = "NB_04_SemanticModelReBindRefresh"
-REFRESH_PIPELINE = "PL_SemanticModel_Rebind_Refresh"
 EXPECTED_ENVIRONMENT_PIP = {
     "fabric-cicd==1.3.0",
     "semantic-link-labs==0.16.0",
@@ -218,29 +217,20 @@ def main() -> None:
 
     deploy_path = ROOT / "scripts" / "deploy_to_fabric.py"
     deploy_source = deploy_path.read_text(encoding="utf-8-sig")
-    for administrator_owned_item in (
-        '("Notebook", "NB_04_SemanticModelReBindRefresh")',
-        '("DataPipeline", "PL_SemanticModel_Rebind_Refresh")',
+    for removed_identity_split in (
+        "ADMIN_OWNED_ITEMS",
+        "OIDC_EXCLUDED_ITEMS",
+        "--admin-owned-only",
+        "verify_admin_identity",
     ):
-        if administrator_owned_item not in deploy_source:
+        if removed_identity_split in deploy_source:
             failures.append(
-                f"{deploy_path.relative_to(ROOT)}: missing administrator ownership declaration "
-                f"{administrator_owned_item}"
-            )
-    for ownership_guard in (
-        "OIDC_EXCLUDED_ITEMS = ADMIN_OWNED_ITEMS",
-        "Skipping administrator-owned deletion in OIDC mode",
-        "Skipping OIDC-owned deletion in administrator mode",
-        "not in OIDC_EXCLUDED_ITEMS",
-    ):
-        if ownership_guard not in deploy_source:
-            failures.append(
-                f"{deploy_path.relative_to(ROOT)}: missing administrator ownership guard: "
-                f"{ownership_guard}"
+                f"{deploy_path.relative_to(ROOT)}: deployment must not split artifacts by identity: "
+                f"{removed_identity_split}"
             )
     if "publish_all_items(workspace, items_to_include=reconciliation_items)" not in deploy_source:
         failures.append(
-            f"{deploy_path.relative_to(ROOT)}: full reconciliation must publish discovered OIDC items"
+            f"{deploy_path.relative_to(ROOT)}: full reconciliation must publish all discovered items"
         )
 
     production_workflow_path = ROOT / ".github" / "workflows" / "deploy-production.yml"
@@ -267,25 +257,11 @@ def main() -> None:
         if snippet not in refresh_source:
             failures.append(f"{refresh_path.relative_to(ROOT)}: missing required logic: {snippet}")
 
-    refresh_pipeline_path = (
-        ROOT / "Pipelines" / f"{REFRESH_PIPELINE}.DataPipeline" / "pipeline-content.json"
-    )
-    refresh_pipeline = json.loads(refresh_pipeline_path.read_text(encoding="utf-8-sig"))
-    refresh_activities = refresh_pipeline.get("properties", {}).get("activities", [])
-    refresh_notebook_id = next(
-        (logical_id for logical_id, identity in logical_items.items() if identity == ("Notebook", REFRESH_NOTEBOOK)),
-        None,
-    )
-    if len(refresh_activities) != 1:
-        failures.append(f"{refresh_pipeline_path.relative_to(ROOT)}: expected one notebook activity")
-    else:
-        refresh_properties = refresh_activities[0].get("typeProperties", {})
-        if refresh_activities[0].get("type") != "TridentNotebook":
-            failures.append(f"{refresh_pipeline_path.relative_to(ROOT)}: activity must be a notebook")
-        if refresh_properties.get("notebookId") != refresh_notebook_id:
-            failures.append(f"{refresh_pipeline_path.relative_to(ROOT)}: wrong notebook logicalId")
-        if refresh_properties.get("workspaceId") != "00000000-0000-0000-0000-000000000000":
-            failures.append(f"{refresh_pipeline_path.relative_to(ROOT)}: must use current-workspace placeholder")
+    removed_refresh_pipeline = ROOT / "Pipelines" / "PL_SemanticModel_Rebind_Refresh.DataPipeline"
+    if removed_refresh_pipeline.exists():
+        failures.append(
+            f"{removed_refresh_pipeline.relative_to(ROOT)}: dedicated refresh pipeline must remain deleted"
+        )
 
     if failures:
         raise SystemExit("Repository validation failed:\n" + "\n".join(failures))
