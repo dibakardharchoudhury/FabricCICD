@@ -159,7 +159,7 @@ def main() -> None:
     if any(item_type == "Dataflow" for item_type, _display_name in seen_items):
         failures.append("Dataflow item found: this solution's Gold path must remain notebook-only")
 
-    pipeline_path = ROOT / "Seed_Data" / "PL_Refresh_Master.DataPipeline" / "pipeline-content.json"
+    pipeline_path = ROOT / "Pipelines" / "PL_Refresh_Master.DataPipeline" / "pipeline-content.json"
     pipeline = json.loads(pipeline_path.read_text(encoding="utf-8-sig"))
     activities = pipeline.get("properties", {}).get("activities", [])
     if len(activities) != len(EXPECTED_PIPELINE):
@@ -221,22 +221,9 @@ def main() -> None:
     for excluded_item in (
         '("Notebook", "NB_04_SemanticModelReBindRefresh")',
         '("DataPipeline", "PL_SemanticModel_Rebind_Refresh")',
-        '("DataPipeline", "PL_Refresh_SemanticModel")',
     ):
         if excluded_item not in deploy_source:
             failures.append(f"{deploy_path.relative_to(ROOT)}: missing deployment exclusion {excluded_item}")
-
-    native_refresh_platform_path = (
-        ROOT / "Gold" / "PL_Refresh_SemanticModel.DataPipeline" / ".platform"
-    )
-    native_refresh_platform = json.loads(
-        native_refresh_platform_path.read_text(encoding="utf-8-sig")
-    )
-    native_refresh_description = native_refresh_platform.get("metadata", {}).get("description", "")
-    if "Dev-only" not in native_refresh_description or "excluded from CI/CD" not in native_refresh_description:
-        failures.append(
-            f"{native_refresh_platform_path.relative_to(ROOT)}: must document its Dev-only CI/CD exclusion"
-        )
 
     refresh_path = ROOT / "Gold" / f"{REFRESH_NOTEBOOK}.Notebook" / "notebook-content.py"
     refresh_source = refresh_path.read_text(encoding="utf-8-sig")
@@ -252,7 +239,9 @@ def main() -> None:
         if snippet not in refresh_source:
             failures.append(f"{refresh_path.relative_to(ROOT)}: missing required logic: {snippet}")
 
-    refresh_pipeline_path = ROOT / "Gold" / f"{REFRESH_PIPELINE}.DataPipeline" / "pipeline-content.json"
+    refresh_pipeline_path = (
+        ROOT / "Pipelines" / f"{REFRESH_PIPELINE}.DataPipeline" / "pipeline-content.json"
+    )
     refresh_pipeline = json.loads(refresh_pipeline_path.read_text(encoding="utf-8-sig"))
     refresh_activities = refresh_pipeline.get("properties", {}).get("activities", [])
     refresh_notebook_id = next(

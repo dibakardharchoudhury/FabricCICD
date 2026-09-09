@@ -24,14 +24,9 @@ NB_04_SemanticModelReBindRefresh -> Gold_SM (Direct Lake) -> Gold_Dashboard
 3. `NB_03_Aggregate_Gold`
 
 NB03 writes the Gold tables. `PL_SemanticModel_Rebind_Refresh` then runs NB04 to validate the Gold
-tables, rebind `Gold_SM` to the current workspace's `Gold_LH`, and perform a full model refresh.
-
-There are two semantic-model refresh pipeline definitions under `Gold/`:
-
-| Pipeline | Scope | Deployment |
-| --- | --- | --- |
-| `PL_SemanticModel_Rebind_Refresh` | Supported Dev/Production refresh path; runs NB04 | Published separately by the designated administrator |
-| `PL_Refresh_SemanticModel` | Dev-only native refresh experiment with a user-scoped connection | Retained in Git; never promoted or deleted by CI/CD |
+tables, rebind `Gold_SM` to the current workspace's `Gold_LH`, and perform a full model refresh. Both
+pipeline definitions are grouped under `Pipelines/`; the older native `PL_Refresh_SemanticModel`
+pipeline has been removed.
 
 ## Repository layout
 
@@ -39,8 +34,8 @@ There are two semantic-model refresh pipeline definitions under `Gold/`:
 | --- | --- |
 | `Bronze/` | Bronze Lakehouse and seed notebook |
 | `Silver/` | Silver Lakehouse and transform notebook |
-| `Gold/` | Gold Lakehouse, aggregate and refresh notebooks, semantic model, report, and refresh pipelines |
-| `Seed_Data/` | Master refresh pipeline |
+| `Gold/` | Gold Lakehouse, aggregate and refresh notebooks, semantic model, and report |
+| `Pipelines/` | Master data pipeline and administrator-owned semantic model refresh pipeline |
 | `semanticlink.Environment/` | Pinned Semantic Link runtime libraries |
 | `scripts/deploy_to_fabric.py` | Dynamic OIDC deployment implementation |
 | `scripts/validate_repository.py` | Source and pipeline contract validation |
@@ -77,7 +72,7 @@ replace their publisher. Publish only those items from an Azure CLI session auth
 ```
 
 The command verifies both the user's Entra UPN and object ID before publishing. It publishes only
-NB04 and `PL_SemanticModel_Rebind_Refresh`; it does not publish the Dev-only native pipeline.
+NB04 and `PL_SemanticModel_Rebind_Refresh`.
 
 The source references have separate meanings:
 

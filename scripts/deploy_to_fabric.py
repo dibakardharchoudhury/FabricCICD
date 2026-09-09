@@ -46,9 +46,7 @@ ADMIN_OWNED_ITEMS = {
     ("Notebook", "NB_04_SemanticModelReBindRefresh"),
     ("DataPipeline", "PL_SemanticModel_Rebind_Refresh"),
 }
-DEPLOYMENT_EXCLUDED_ITEMS = ADMIN_OWNED_ITEMS | {
-    ("DataPipeline", "PL_Refresh_SemanticModel"),
-}
+DEPLOYMENT_EXCLUDED_ITEMS = ADMIN_OWNED_ITEMS
 ADMIN_UPN = "admin@mngenvmcap218279.onmicrosoft.com"
 ADMIN_OBJECT_ID = "7ab1a6b2-d2e6-41b8-92ba-1fb3a8ba5bc0"
 
