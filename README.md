@@ -394,4 +394,13 @@ The `semanticlink` Environment is present but **unpublished**, so `semantic-link
 on the Spark pool. This happens when the Environment arrived via **Git sync** (Git brings the
 definition but doesn't build it) — typically the Dev workspace. Fix: **`semanticlink` → Publish**
 (~10–20 min), then re-run `PL_Refresh_Master`. Re-publish only when libraries change.
-*(Deploy targets don't hit this — `NB_04_Deploy` publishes the Environment during deploy.)*
+Automated target deployment publishes changed Environment definitions and waits for completion.
+
+### `Gold_SM` refresh fails with `api.fabric.microsoft.com/.../refreshes`
+
+Semantic-model refresh is a Power BI REST operation and must use `api.powerbi.com` with a
+`/datasets/{id}/refreshes` route. The Environment pins `semantic-link-labs==0.16.0` and
+`semantic-link-sempy==0.14.1`, and `NB_03` verifies both package versions and the client base URL
+before refreshing. If this guard fails after an Environment update, publish `semanticlink` and start
+the notebook in a new Spark session. A `403` from the correct Power BI refresh route is handled by
+the bounded first-run retry loop; a Fabric-host refresh route is a non-retryable runtime mismatch.

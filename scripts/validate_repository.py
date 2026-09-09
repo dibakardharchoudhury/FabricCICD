@@ -30,6 +30,15 @@ EXPECTED_GOLD_SNIPPETS = {
     '_write_gold(df_gold_cost, "cost_monthly")',
     '_write_gold(df_gold_sched, "schedule_summary")',
     '_write_gold(df_kpi_facts, "field_kpi_facts")',
+    '"semantic-link-labs": "0.16.0"',
+    '"semantic-link-sempy": "0.14.1"',
+    'fabric.PowerBIRestClient().default_base_url',
+    "_powerbi_refresh_403",
+}
+EXPECTED_ENVIRONMENT_PIP = {
+    "fabric-cicd==1.3.0",
+    "semantic-link-labs==0.16.0",
+    "semantic-link-sempy==0.14.1",
 }
 REMOVED_REFERENCES = ("DF_" + "Gold_PA", "SPNBased" + "RefreshNotAllowed")
 
@@ -83,6 +92,20 @@ def main() -> None:
             yaml.safe_load(path.read_text(encoding="utf-8-sig"))
         except (UnicodeDecodeError, yaml.YAMLError) as error:
             failures.append(f"{path.relative_to(ROOT)}: {error}")
+
+    environment_path = ROOT / "semanticlink.Environment" / "Libraries" / "PublicLibraries" / "environment.yml"
+    environment = yaml.safe_load(environment_path.read_text(encoding="utf-8-sig"))
+    environment_pip = {
+        package
+        for dependency in environment.get("dependencies", [])
+        if isinstance(dependency, dict)
+        for package in dependency.get("pip") or []
+    }
+    if environment_pip != EXPECTED_ENVIRONMENT_PIP:
+        failures.append(
+            f"{environment_path.relative_to(ROOT)}: expected exact pip pins "
+            f"{sorted(EXPECTED_ENVIRONMENT_PIP)}, found {sorted(environment_pip)}"
+        )
 
     seen_items: set[tuple[str, str]] = set()
     logical_items: dict[str, tuple[str, str]] = {}

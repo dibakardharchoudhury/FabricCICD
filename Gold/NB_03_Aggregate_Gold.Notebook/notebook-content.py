@@ -165,11 +165,32 @@ print(f"✅ Gold_LH.field_kpi_facts: {df_kpi_facts.count()} rows")
 
 # Cell 6 — Validate Gold and refresh the Direct Lake model
 import sempy_labs as labs
+import sempy.fabric as fabric
 from sempy_labs import directlake
+from importlib.metadata import version as package_version
 import notebookutils
 import time
 
 _EXPECTED_TABLES = ["production_daily", "cost_monthly", "schedule_summary", "field_kpi_facts"]
+_EXPECTED_PACKAGES = {
+    "semantic-link-labs": "0.16.0",
+    "semantic-link-sempy": "0.14.1",
+}
+
+_loaded_packages = {name: package_version(name) for name in _EXPECTED_PACKAGES}
+if _loaded_packages != _EXPECTED_PACKAGES:
+    raise RuntimeError(
+        f"Unexpected Semantic Link runtime: {_loaded_packages}; expected {_EXPECTED_PACKAGES}. "
+        "Publish the semanticlink Environment and start this notebook in a new Spark session."
+    )
+
+_pbi_base_url = fabric.PowerBIRestClient().default_base_url
+if not _pbi_base_url.startswith("https://api.powerbi.com/"):
+    raise RuntimeError(
+        f"PowerBIRestClient resolved to '{_pbi_base_url}', not 'https://api.powerbi.com/'. "
+        "Publish the pinned semanticlink Environment and start this notebook in a new Spark session."
+    )
+print(f"Semantic Link runtime verified: {_loaded_packages}; Power BI API: {_pbi_base_url}")
 
 # Resolve the current workspace at runtime.
 _ws_id = notebookutils.runtime.context.get("currentWorkspaceId") or spark.conf.get("trident.workspace.id")
@@ -209,22 +230,41 @@ for _attempt in range(1, _MAX_ATTEMPTS + 1):
         break
     except Exception as _e:
         _msg = str(_e)
-        _transient = ("0xC14700DF" in _msg) or ("do not exist or access" in _msg.lower())
+        _msg_lower = _msg.lower()
+        _response = getattr(_e, "response", None)
+        _status_code = getattr(_e, "status_code", None) or getattr(_response, "status_code", None)
+        _wrong_endpoint = "api.fabric.microsoft.com" in _msg_lower and "/refreshes" in _msg_lower
+        if _wrong_endpoint:
+            raise RuntimeError(
+                "Semantic Link attempted a Power BI semantic-model refresh through the Fabric REST "
+                f"endpoint. Loaded packages: {_loaded_packages}. Publish the pinned semanticlink "
+                "Environment and start this notebook in a new Spark session. Original error: "
+                f"{_e}"
+            ) from _e
+
+        _powerbi_refresh_403 = (
+            (_status_code == 403 or "403 forbidden" in _msg_lower)
+            and "api.powerbi.com" in _msg_lower
+            and "/datasets/" in _msg_lower
+            and "/refreshes" in _msg_lower
+        )
+        _transient = (
+            "0xC14700DF" in _msg
+            or "do not exist or access" in _msg_lower
+            or _powerbi_refresh_403
+        )
         if _transient and _attempt < _MAX_ATTEMPTS:
-            print(f"⏳ Attempt {_attempt}/{_MAX_ATTEMPTS}: tables still syncing into metadata after "
-                  f"create-from-scratch; retrying in {_BACKOFF_SECS}s "
+            print(f"⏳ Attempt {_attempt}/{_MAX_ATTEMPTS}: semantic-model refresh is not ready; "
+                  f"retrying in {_BACKOFF_SECS}s "
                   f"(elapsed wait so far ~{(_attempt - 1) * _BACKOFF_SECS // 60} min)...")
             time.sleep(_BACKOFF_SECS)
             continue
+
+        _failure_kind = "retry window exhausted" if _transient else "non-retryable error"
         raise Exception(
             f"Refresh of Direct Lake (on OneLake) model '{_SEMANTIC_MODEL}' FAILED after "
-            f"{_attempt} attempt(s) (~{((_attempt - 1) * _BACKOFF_SECS) // 60} min of waiting): {_e}\n"
-            f"  • 0xC14700DF / 'do not exist or access' here means the create-from-scratch metadata sync\n"
-            f"    still had not completed within the retry window. This is NOT a permission/ownership\n"
-            f"    issue — the same identity refreshes cleanly once the sync finishes. Raise _MAX_ATTEMPTS\n"
-            f"    and/or _BACKOFF_SECS above to extend the window if a stage's first-run sync is slower.\n"
-            f"  • Re-running this notebook (or the pipeline) after a few minutes will also succeed, since\n"
-            f"    by then the tables are fully registered."
+            f"{_attempt} attempt(s) (~{((_attempt - 1) * _BACKOFF_SECS) // 60} min of waiting); "
+            f"{_failure_kind}: {_e}"
         ) from _e
 
 print("🏆 Gold aggregation COMPLETE — tables written, Gold_SM refreshed")
