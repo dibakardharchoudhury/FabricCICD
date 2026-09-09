@@ -30,12 +30,9 @@ EXPECTED_GOLD_SNIPPETS = {
     '_write_gold(df_gold_cost, "cost_monthly")',
     '_write_gold(df_gold_sched, "schedule_summary")',
     '_write_gold(df_kpi_facts, "field_kpi_facts")',
-    '"semantic-link-labs": "0.16.0"',
-    '"semantic-link-sempy": "0.14.1"',
-    'notebookutils.credentials.getToken("pbi")',
-    'https://api.powerbi.com/v1.0/myorg/groups/',
-    'def _refresh_semantic_model(dataset_id):',
-    "_powerbi_refresh_403",
+    "directlake.update_direct_lake_model_connection(",
+    "labs.refresh_semantic_model(",
+    'dataset=_SEMANTIC_MODEL, workspace=_ws_id, refresh_type="full"',
 }
 EXPECTED_ENVIRONMENT_PIP = {
     "fabric-cicd==1.3.0",

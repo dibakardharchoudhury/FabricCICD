@@ -395,12 +395,3 @@ on the Spark pool. This happens when the Environment arrived via **Git sync** (G
 definition but doesn't build it) — typically the Dev workspace. Fix: **`semanticlink` → Publish**
 (~10–20 min), then re-run `PL_Refresh_Master`. Re-publish only when libraries change.
 Automated target deployment publishes changed Environment definitions and waits for completion.
-
-### `Gold_SM` refresh fails with `api.fabric.microsoft.com/.../refreshes`
-
-Semantic-model refresh is a Power BI REST operation and must use `api.powerbi.com` with a
-`/datasets/{id}/refreshes` route. Some Semantic Link versions resolve `PowerBIRestClient` to the
-Fabric REST host, so `NB_03` bypasses that client for refresh: it obtains the notebook runtime's
-Power BI token, submits the documented Power BI REST request, and polls the returned operation URL.
-The Environment remains pinned for reproducible Direct Lake rebinding behavior. A `403` from the
-correct Power BI refresh route is handled by the bounded first-run retry loop.
