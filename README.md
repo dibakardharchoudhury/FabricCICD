@@ -108,16 +108,24 @@ first deployment, run `PL_Refresh_Master` and verify:
 | `Silver_LH.dbo` | `production_conformed`, `cost_conformed`, `schedule_conformed` |
 | `Gold_LH.dbo` | `production_daily`, `cost_monthly`, `schedule_summary`, `field_kpi_facts` |
 
-After the pipeline succeeds, verify that NB03 completed the Direct Lake rebind and then refresh the
-semantic model separately.
+After the pipeline succeeds, verify that NB03 completed the Direct Lake rebind. Wait about two
+minutes for the new or updated Delta table metadata to become visible to Direct Lake, then refresh
+the semantic model separately.
 
 ### Refresh Gold_SM manually
 
 1. Open the target Fabric workspace.
-2. Find `Gold_SM` and select its **Refresh** button, or open its context menu and select
+2. After `PL_Refresh_Master` and NB03 complete, wait about two minutes for Direct Lake metadata
+    synchronization.
+3. Find `Gold_SM` and select its **Refresh** button, or open its context menu and select
     **Refresh now**.
-3. Open the semantic model refresh history and confirm the refresh completed before validating
+4. Open the semantic model refresh history and confirm the refresh completed before validating
     `Gold_Dashboard`.
+
+If an immediate refresh says that `field_kpi_facts` does not exist or access was denied even though
+the table is present in `Gold_LH.dbo`, allow more time for metadata synchronization and retry. This
+error can be transient immediately after deployment, first-time table creation, or Direct Lake
+rebinding.
 
 ### Schedule Gold_SM in Production
 
@@ -127,8 +135,8 @@ refresh to NB03:
 1. Open `Gold_SM` in the Production workspace and select **Settings**.
 2. Open **Refresh** or **Scheduled refresh**, enable the schedule, and set the time zone and desired
     refresh times.
-3. Schedule the model after `PL_Refresh_Master` normally finishes, including a buffer for notebook
-    runtime and first-run table creation.
+3. Schedule the model after `PL_Refresh_Master` normally finishes, including at least a two-minute
+    metadata synchronization buffer in addition to notebook runtime and first-run table creation.
 4. Save the schedule and monitor both pipeline history and semantic model refresh history separately.
 
 This design keeps deployment credential-free and lets Fabric retry and monitor the data pipeline and
@@ -149,5 +157,5 @@ the Production semantic model schedule and refresh history.
 ### First Direct Lake frame reports `0xC14700DF`
 
 New Delta tables can take several minutes to appear in OneLake metadata. If a manual or scheduled
-refresh fails immediately after first-time table creation, wait for metadata convergence and retry
-the semantic model refresh from its refresh history.
+refresh fails immediately after deployment, table creation, or Direct Lake rebinding, wait at least
+two minutes for metadata convergence and retry the semantic model refresh from its refresh history.
