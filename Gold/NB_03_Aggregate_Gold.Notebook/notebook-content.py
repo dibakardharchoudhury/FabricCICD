@@ -173,7 +173,10 @@ PowerBIRestClient._get_default_base_url = _powerbi_base_url
 
 import sempy_labs as labs
 from sempy_labs import directlake
+from azure.core.credentials import AccessToken
+from fabric.analytics.environment.credentials import SetFabricAnalyticsDefaultTokenCredentials
 import base64
+import hashlib
 import json
 import notebookutils
 import time
@@ -193,24 +196,52 @@ _SEMANTIC_MODEL = "Gold_SM"
 _MAX_ATTEMPTS   = 15         # total tries
 _BACKOFF_SECS   = 120        # wait between tries (create-from-scratch sync can run ~10 min+)
 
+def _token_claims(token):
+    payload = token.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
+
+class _NotebookUtilsCredential:
+    def __init__(self):
+        self._logged_scopes = set()
+
+    def get_token(self, *scopes, **kwargs):
+        scope = scopes[0] if scopes else "https://analysis.windows.net/powerbi/api/.default"
+        audience = scope.removesuffix("/.default")
+        token_name = "pbi" if "analysis.windows.net/powerbi/api" in audience else audience
+        token = notebookutils.credentials.getToken(token_name)
+        if scope not in self._logged_scopes:
+            claims = _token_claims(token)
+            fingerprint = hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
+            print(
+                "Explicit Semantic Link credential: "
+                f"scope={scope}, aud={claims.get('aud', '(not set)')}, "
+                f"oid={claims.get('oid', '(not set)')}, "
+                f"appid={claims.get('appid', claims.get('azp', '(not set)'))}, "
+                f"token_sha256={fingerprint}"
+            )
+            self._logged_scopes.add(scope)
+        return AccessToken(token, int(_token_claims(token).get("exp", time.time() + 3600)))
+
+_semantic_link_credential = _NotebookUtilsCredential()
+
 # Rebind defensively before refreshing.
 _GOLD_LAKEHOUSE = "Gold_LH"
 _gold_lh_meta = notebookutils.lakehouse.get(_GOLD_LAKEHOUSE, _ws_id)
 _gold_lh_id   = _gold_lh_meta["id"] if isinstance(_gold_lh_meta, dict) else _gold_lh_meta.id
-directlake.update_direct_lake_model_connection(
-    dataset=_SEMANTIC_MODEL, workspace=_ws_id,
-    source=_gold_lh_id, source_type="Lakehouse",
-    source_workspace=_ws_id, use_sql_endpoint=False,
-)
+with SetFabricAnalyticsDefaultTokenCredentials(_semantic_link_credential):
+    directlake.update_direct_lake_model_connection(
+        dataset=_SEMANTIC_MODEL, workspace=_ws_id,
+        source=_gold_lh_id, source_type="Lakehouse",
+        source_workspace=_ws_id, use_sql_endpoint=False,
+    )
 print(f"🔗 '{_SEMANTIC_MODEL}' Direct Lake connection re-pointed to '{_GOLD_LAKEHOUSE}' "
       f"({_gold_lh_id}) in this workspace before refresh.")
 
 print(f"\n── Refreshing Direct Lake (on OneLake) model '{_SEMANTIC_MODEL}' (full reframe) ──")
 print(f"Semantic Link Power BI endpoint: {PowerBIRestClient().default_base_url}")
 _pbi_token = notebookutils.credentials.getToken("pbi")
-_pbi_payload = _pbi_token.split(".")[1]
-_pbi_payload += "=" * (-len(_pbi_payload) % 4)
-_pbi_claims = json.loads(base64.urlsafe_b64decode(_pbi_payload).decode("utf-8"))
+_pbi_claims = _token_claims(_pbi_token)
 print(
     "Semantic Link caller: "
     f"idtyp={_pbi_claims.get('idtyp', '(not set)')}, "
@@ -221,9 +252,10 @@ print(
 _refreshed = False
 for _attempt in range(1, _MAX_ATTEMPTS + 1):
     try:
-        labs.refresh_semantic_model(
-            dataset=_SEMANTIC_MODEL, workspace=_ws_id, refresh_type="full",
-        )
+        with SetFabricAnalyticsDefaultTokenCredentials(_semantic_link_credential):
+            labs.refresh_semantic_model(
+                dataset=_SEMANTIC_MODEL, workspace=_ws_id, refresh_type="full",
+            )
         print(f"✅ '{_SEMANTIC_MODEL}' refreshed on attempt {_attempt}/{_MAX_ATTEMPTS} "
               f"(Direct Lake reframe complete) — report is up to date.")
         _refreshed = True

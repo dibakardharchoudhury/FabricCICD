@@ -32,6 +32,8 @@ EXPECTED_GOLD_SNIPPETS = {
     '_write_gold(df_kpi_facts, "field_kpi_facts")',
     "directlake.update_direct_lake_model_connection(",
     "PowerBIRestClient._get_default_base_url = _powerbi_base_url",
+    "SetFabricAnalyticsDefaultTokenCredentials(_semantic_link_credential)",
+    'token_name = "pbi" if "analysis.windows.net/powerbi/api" in audience else audience',
     "labs.refresh_semantic_model(",
     'dataset=_SEMANTIC_MODEL, workspace=_ws_id, refresh_type="full"',
 }
