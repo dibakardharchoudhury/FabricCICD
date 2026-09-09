@@ -243,10 +243,13 @@ for _attempt in range(1, _MAX_ATTEMPTS + 1):
 
         _failure_guidance = (
             "  • The Power BI API returned 403 for the correct api.powerbi.com endpoint. The pipeline's\n"
-            "    Power BI token is valid but its caller does not have permission to refresh this semantic\n"
-            "    model. Match the oid/appid printed above to the Notebook activity connection, then grant\n"
-            "    that principal a workspace role with semantic-model write access. Deployment identity and\n"
-            "    Notebook activity execution identity are separate. Retrying will not resolve this 403."
+            "    token reached Power BI, but the empty response does not identify the rejected authorization\n"
+            "    condition. The model's configuredBy owner and full item rights must be checked separately.\n"
+            "    For an SPN-triggered notebook, labs.refresh_semantic_model delegates to sempy's\n"
+            "    refresh_dataset operation, which is not in Microsoft's supported-function list for the\n"
+            "    default Semantic Link token service. Use an explicitly authenticated supported SPN flow or\n"
+            "    confirm expanded default-token support before treating this as a workspace-role failure.\n"
+            "    Retrying the same request will not resolve this 403."
             if _forbidden else
             "  • 0xC14700DF / 'do not exist or access' can indicate create-from-scratch metadata sync.\n"
             "    Extend _MAX_ATTEMPTS or _BACKOFF_SECS if the first-run sync exceeds this retry window."
