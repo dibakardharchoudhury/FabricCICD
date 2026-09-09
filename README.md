@@ -17,9 +17,10 @@ Bronze_LH ─ NB_01_Seed_Bronze        (inline sample data)
 ```
 
 `PL_Refresh_Master` runs the chain in order; `NB_03` refreshes `Gold_SM` right after writing the
-Gold tables (no separate model-refresh activity). Each Notebook activity must use a Fabric Notebook
-connection authenticated as `fabric-rest` to run independently of the pipeline caller. The Dataflow
-uses its separately configured connection credential.
+Gold tables (no separate model-refresh activity). Each Notebook activity runs with the authentication
+method selected under **Settings → Connection**; item ownership does not set its runtime identity.
+The GitHub OIDC `fabric-rest` identity deploys item definitions but is not automatically a Notebook
+connection. The Dataflow uses its separately configured connection credential.
 
 ## Repo layout
 
