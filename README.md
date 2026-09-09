@@ -26,13 +26,20 @@ NB_04_SemanticModelReBindRefresh -> Gold_SM (Direct Lake) -> Gold_Dashboard
 NB03 writes the Gold tables. `PL_SemanticModel_Rebind_Refresh` then runs NB04 to validate the Gold
 tables, rebind `Gold_SM` to the current workspace's `Gold_LH`, and perform a full model refresh.
 
+There are two semantic-model refresh pipeline definitions under `Gold/`:
+
+| Pipeline | Scope | Deployment |
+| --- | --- | --- |
+| `PL_SemanticModel_Rebind_Refresh` | Supported Dev/Production refresh path; runs NB04 | Published separately by the designated administrator |
+| `PL_Refresh_SemanticModel` | Dev-only native refresh experiment with a user-scoped connection | Retained in Git; never promoted or deleted by CI/CD |
+
 ## Repository layout
 
 | Path | Purpose |
 | --- | --- |
 | `Bronze/` | Bronze Lakehouse and seed notebook |
 | `Silver/` | Silver Lakehouse and transform notebook |
-| `Gold/` | Gold Lakehouse, aggregate notebook, semantic model, and report |
+| `Gold/` | Gold Lakehouse, aggregate and refresh notebooks, semantic model, report, and refresh pipelines |
 | `Seed_Data/` | Master refresh pipeline |
 | `semanticlink.Environment/` | Pinned Semantic Link runtime libraries |
 | `scripts/deploy_to_fabric.py` | Dynamic OIDC deployment implementation |
@@ -69,9 +76,8 @@ replace their publisher. Publish only those items from an Azure CLI session auth
     --admin-owned-only
 ```
 
-The command verifies both the user's Entra UPN and object ID before publishing.
-The connection-bound Dev item `PL_Refresh_SemanticModel` is also retained in Git but excluded from
-promotion because its native refresh activity references a user-scoped Fabric connection.
+The command verifies both the user's Entra UPN and object ID before publishing. It publishes only
+NB04 and `PL_SemanticModel_Rebind_Refresh`; it does not publish the Dev-only native pipeline.
 
 The source references have separate meanings:
 
@@ -127,23 +133,23 @@ first deployment, run `PL_Refresh_Master` and verify:
 | `Gold_LH.dbo` | `production_daily`, `cost_monthly`, `schedule_summary`, `field_kpi_facts` |
 
 After the master pipeline succeeds, run `PL_SemanticModel_Rebind_Refresh`. NB04 uses the same
-dynamic `Gold_LH` and `semanticlink` dependencies as NB03, rebinds the model, and retries transient
-Direct Lake metadata synchronization failures before reporting success.
+dynamic `Gold_LH` and `semanticlink` dependencies as NB03, rebinds the model, and retries the
+observed transient Direct Lake framing failure before reporting success.
 
 ### Manual refresh fallback
 
 1. Open the target Fabric workspace.
-2. After `PL_Refresh_Master` and NB03 complete, wait about two minutes for Direct Lake metadata
-    synchronization.
+2. After `PL_Refresh_Master` and NB03 complete, wait about two minutes before refreshing the Direct
+    Lake model.
 3. Find `Gold_SM` and select its **Refresh** button, or open its context menu and select
     **Refresh now**.
 4. Open the semantic model refresh history and confirm the refresh completed before validating
     `Gold_Dashboard`.
 
 If an immediate refresh says that `field_kpi_facts` does not exist or access was denied even though
-the table is present in `Gold_LH.dbo`, allow more time for metadata synchronization and retry. This
-error can be transient immediately after deployment, first-time table creation, or Direct Lake
-rebinding.
+the table is present in `Gold_LH.dbo`, allow more time and retry. This exact framing error has been
+observed to clear without permission or ownership changes; do not infer its internal cause without
+detailed refresh diagnostics.
 
 ### Scheduled refresh alternative
 
@@ -154,7 +160,7 @@ model's own refresh schedule:
 2. Open **Refresh** or **Scheduled refresh**, enable the schedule, and set the time zone and desired
     refresh times.
 3. Schedule the model after `PL_Refresh_Master` normally finishes, including at least a two-minute
-    metadata synchronization buffer in addition to notebook runtime and first-run table creation.
+    buffer in addition to notebook runtime and first-run table creation.
 4. Save the schedule and monitor both pipeline history and semantic model refresh history separately.
 
 Do not run this schedule at the same time as `PL_SemanticModel_Rebind_Refresh`.
@@ -166,6 +172,12 @@ Do not run this schedule at the same time as `PL_SemanticModel_Rebind_Refresh`.
 Publish the `semanticlink` Environment and wait for its library build to finish. Git synchronization
 creates the Environment definition but does not build it.
 
+### NB04 Git sync reports `PyToIpynbFailure`
+
+Fabric notebook source is line-delimited. Ensure `notebook-content.py` ends with a newline after its
+final `# META }` record, then rerun `python scripts/validate_repository.py` before syncing. The
+validator rejects missing notebook terminators so this malformed source cannot be committed again.
+
 ### Gold_SM is not current after the master pipeline
 
 NB03 only writes Gold tables. Run `PL_SemanticModel_Rebind_Refresh`, then check its run history and
@@ -173,6 +185,7 @@ the semantic model refresh history.
 
 ### First Direct Lake frame reports `0xC14700DF`
 
-New Delta tables can take several minutes to appear in OneLake metadata. If a manual or scheduled
-refresh fails immediately after deployment, table creation, or Direct Lake rebinding, wait at least
-two minutes for metadata convergence and retry the semantic model refresh from its refresh history.
+If a manual or scheduled refresh fails immediately after deployment, table creation, or Direct Lake
+rebinding, wait at least two minutes and retry from semantic model refresh history. Later success
+without permission changes establishes that the observed case is transient, but does not establish
+whether the internal cause is metadata synchronization, framing state, or another Fabric behavior.

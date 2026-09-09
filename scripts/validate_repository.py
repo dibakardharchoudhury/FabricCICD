@@ -88,6 +88,8 @@ def main() -> None:
             failures.append(
                 f"{path.relative_to(ROOT)}: notebook metadata must be followed by a CELL marker"
             )
+        if path.name == "notebook-content.py" and not source.endswith("\n"):
+            failures.append(f"{path.relative_to(ROOT)}: notebook source must end with a newline")
 
     json_paths = [
         path for path in tracked_paths
@@ -223,6 +225,18 @@ def main() -> None:
     ):
         if excluded_item not in deploy_source:
             failures.append(f"{deploy_path.relative_to(ROOT)}: missing deployment exclusion {excluded_item}")
+
+    native_refresh_platform_path = (
+        ROOT / "Gold" / "PL_Refresh_SemanticModel.DataPipeline" / ".platform"
+    )
+    native_refresh_platform = json.loads(
+        native_refresh_platform_path.read_text(encoding="utf-8-sig")
+    )
+    native_refresh_description = native_refresh_platform.get("metadata", {}).get("description", "")
+    if "Dev-only" not in native_refresh_description or "excluded from CI/CD" not in native_refresh_description:
+        failures.append(
+            f"{native_refresh_platform_path.relative_to(ROOT)}: must document its Dev-only CI/CD exclusion"
+        )
 
     refresh_path = ROOT / "Gold" / f"{REFRESH_NOTEBOOK}.Notebook" / "notebook-content.py"
     refresh_source = refresh_path.read_text(encoding="utf-8-sig")
