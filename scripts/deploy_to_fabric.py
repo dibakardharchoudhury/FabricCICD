@@ -49,12 +49,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repository-directory", default=".")
     parser.add_argument("--git-compare-ref", default="HEAD~1")
     parser.add_argument("--exclude-directory", action="append", default=[])
-    parser.add_argument(
-        "--exclude-item-type",
-        action="append",
-        default=[],
-        choices=sorted(SUPPORTED_ITEM_TYPES),
-    )
     parser.add_argument("--delete-excluded-items", action="store_true")
     parser.add_argument("--full-deploy", action="store_true")
     parser.add_argument("--remove-orphans", action="store_true")
@@ -184,14 +178,8 @@ def delete_removed_items(
     git_compare_ref: str,
     target_workspace_id: str,
     api: FabricApi,
-    excluded_item_types: set[str] | None = None,
 ) -> None:
-    excluded_item_types = excluded_item_types or set()
-    deleted_items = [
-        item
-        for item in discover_deleted_items(repository_directory, git_compare_ref)
-        if item[0] not in excluded_item_types
-    ]
+    deleted_items = discover_deleted_items(repository_directory, git_compare_ref)
     if not deleted_items:
         print("No Git-removed Fabric items to delete")
         return
@@ -351,17 +339,9 @@ def main() -> None:
     print(f"Dev workspace: {args.dev_workspace} ({dev_workspace_id})")
     print(f"Target workspace: {args.target_workspace} ({target_workspace_id})")
     excluded_directories = set(args.exclude_directory)
-    excluded_item_types = set(args.exclude_item_type)
     repository_items = discover_items(repository_directory, excluded_directories)
-    publish_repository_items = [
-        item for item in repository_items if item[0] not in excluded_item_types
-    ]
     item_types = sorted(
-        {
-            item_type
-            for item_type, _name, _path in publish_repository_items
-            if item_type != "VariableLibrary"
-        }
+        {item_type for item_type, _name, _path in repository_items if item_type != "VariableLibrary"}
     )
     if not item_types:
         raise ValueError(f"No supported Fabric item folders were found under {repository_directory}")
@@ -383,7 +363,6 @@ def main() -> None:
     print(f"Comparing {len(repository_items)} source items with {args.target_workspace}")
     print("Excluded item names: " + ", ".join(sorted(EXCLUDED_ITEM_NAMES)))
     print("Excluded directories: " + (", ".join(sorted(excluded_directories)) or "(none)"))
-    print("Excluded item types: " + (", ".join(sorted(excluded_item_types)) or "(none)"))
     if args.full_deploy:
         print("Full deployment requested")
         publish_all_items(
@@ -392,7 +371,7 @@ def main() -> None:
         )
     else:
         items_to_publish = select_items_to_publish(
-            publish_repository_items,
+            repository_items,
             dev_workspace_id,
             target_workspace_id,
             api,
@@ -411,7 +390,6 @@ def main() -> None:
         args.git_compare_ref,
         target_workspace_id,
         api,
-        excluded_item_types,
     )
     if args.delete_excluded_items:
         delete_excluded_items(target_workspace_id, api)

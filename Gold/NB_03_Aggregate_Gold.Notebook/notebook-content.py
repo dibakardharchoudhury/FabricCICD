@@ -34,7 +34,7 @@
 # Cell 1 — Imports
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
-    col, sum as _sum, avg, count, countDistinct, max as _max, min as _min,
+    col, sum as _sum, avg, count, max as _max,
     round as _round, date_format, current_timestamp, lit
 )
 spark = SparkSession.builder.getOrCreate()
@@ -51,13 +51,31 @@ def _write_gold(df, table):
             pass
     df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(full)
 
-# Cell 2 — Validate the dataflow-owned production table
-if not spark.catalog.tableExists("Gold_LH.dbo.production_daily"):
-    raise Exception(
-        "Gold_LH.dbo.production_daily is missing. It is produced by the DF_Gold_PA dataflow, which "
-        "must run BEFORE this notebook in PL_Refresh_Master. Check the pipeline ordering / dataflow run."
+# Cell 2 — Gold Production: daily field summary
+df_silver_prod = spark.table("Silver_LH.dbo.production_conformed")
+
+df_gold_prod = (
+    df_silver_prod
+    .groupBy("date", "field")
+    .agg(
+        _sum("oil_bbl").alias("total_oil_bbl"),
+        _sum("gas_mcf").alias("total_gas_mcf"),
+        _sum("water_bbl").alias("total_water_bbl"),
+        _sum("boe_total").alias("total_boe"),
+        avg("water_cut_pct").alias("avg_water_cut_pct"),
+        count(lit(1)).alias("active_well_count"),
     )
-print("✅ Gold_LH.production_daily present (produced by DF_Gold_PA) — not recreated by this notebook.")
+    .withColumn("total_oil_bbl", _round("total_oil_bbl", 2))
+    .withColumn("total_gas_mcf", _round("total_gas_mcf", 2))
+    .withColumn("total_boe", _round("total_boe", 2))
+    .withColumn("avg_water_cut_pct", _round("avg_water_cut_pct", 2))
+    .withColumn("report_generated_at", current_timestamp())
+    .orderBy("date", "field")
+)
+
+_write_gold(df_gold_prod, "production_daily")
+
+print(f"✅ Gold_LH.production_daily: {df_gold_prod.count()} rows")
 
 # Cell 3 — Gold Cost: monthly field + cost type summary
 df_silver_cost = spark.table("Silver_LH.dbo.cost_conformed")
@@ -102,39 +120,15 @@ _write_gold(df_gold_sched, "schedule_summary")
 print(f"✅ Gold_LH.schedule_summary: {df_gold_sched.count()} rows")
 
 # Cell 5 — Build the schema-stable cross-domain KPI table
-_df_prod = spark.table("Gold_LH.dbo.production_daily")
-_prod_cols = set(_df_prod.columns)
-
-if {"total_boe", "total_oil_bbl", "active_well_count"} <= _prod_cols:
-    df_prod_summary = (
-        _df_prod
-        .groupBy("field")
-        .agg(
-            avg("total_boe").alias("avg_daily_boe"),
-            _sum("total_oil_bbl").alias("cumulative_oil_bbl"),
-            avg("active_well_count").alias("avg_active_wells"),
-        )
+df_prod_summary = (
+    df_gold_prod
+    .groupBy("field")
+    .agg(
+        avg("total_boe").alias("avg_daily_boe"),
+        _sum("total_oil_bbl").alias("cumulative_oil_bbl"),
+        avg("active_well_count").alias("avg_active_wells"),
     )
-else:
-    # Normalize row-level data to the dataflow's daily grain.
-    _daily = (
-        _df_prod
-        .groupBy("field", "date")
-        .agg(
-            _sum("boe_total").alias("_daily_boe"),
-            _sum("oil_bbl").alias("_daily_oil"),
-            countDistinct("well_id").alias("_active_wells"),
-        )
-    )
-    df_prod_summary = (
-        _daily
-        .groupBy("field")
-        .agg(
-            avg("_daily_boe").alias("avg_daily_boe"),
-            _sum("_daily_oil").alias("cumulative_oil_bbl"),
-            avg("_active_wells").alias("avg_active_wells"),
-        )
-    )
+)
 
 df_cost_summary = (
     spark.table("Gold_LH.dbo.cost_monthly")

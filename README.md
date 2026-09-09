@@ -4,25 +4,21 @@ A Bronze → Silver → Gold lakehouse promoted between Fabric workspaces **enti
 with [fabric-cicd](https://microsoft.github.io/fabric-cicd/). One notebook — `NB_04_Deploy` —
 publishes the production item definitions into a target workspace and rebinds all cross-workspace
 references. The `Deploy/` subtree itself stays in Dev.
-No Fabric Deployment Pipeline is required; Dataflow credentials still require a one-time sign-in
-in each workspace.
+No Fabric Deployment Pipeline or Dataflow credential setup is required.
 
 ## Pipeline
 
 ```text
 Bronze_LH ─ NB_01_Seed_Bronze        (inline sample data)
    └► Silver_LH ─ NB_02_Transform_Silver
-        └► Gold_LH ─ DF_Gold_PA → NB_03_Aggregate_Gold
+   └► Gold_LH ─ NB_03_Aggregate_Gold
               └► Gold_SM (Direct Lake) ─► Gold_Dashboard
 ```
 
-`PL_Refresh_Master` runs the chain in order; `NB_03` refreshes `Gold_SM` right after writing the
-Gold tables (no separate model-refresh activity). Each Notebook activity runs with the authentication
-method selected under **Settings → Connection**. The Dataflow uses its separately saved connection
-credential. In a workspace bootstrapped by the GitHub OIDC `fabric-rest` identity, a direct user
-refresh of the Dataflow can succeed while the pipeline activity fails with
-`SPNBasedRefreshNotAllowed`. Taking over the pipeline alone does not change that behavior. Take over
-the Dataflow and verify the pipeline activity before enabling a schedule.
+`PL_Refresh_Master` runs the three notebooks in order; `NB_03` creates all Gold tables and refreshes
+`Gold_SM` (no separate model-refresh activity). GitHub Actions publishes notebooks and the pipeline
+through the OIDC `fabric-rest` service principal. Each Notebook activity runs with the authentication
+method selected under **Settings → Connection**.
 
 ## Repo layout
 
@@ -30,7 +26,7 @@ the Dataflow and verify the pipeline activity before enabling a schedule.
 | --- | --- |
 | `Bronze/` | `Bronze_LH` and `NB_01_Seed_Bronze` |
 | `Silver/` | `Silver_LH` and `NB_02_Transform_Silver` |
-| `Gold/` | `Gold_LH`, `DF_Gold_PA`, `NB_03`, pipeline, model, and report |
+| `Gold/` | `Gold_LH`, `NB_03`, pipeline, model, and report |
 | `Deploy/NB_04_Deploy.Notebook/` | **Dev-only deploy tool** — excluded from target stages |
 | `semanticlink.Environment/` | Spark env (`fabric-cicd`, `semantic-link-labs`) |
 
@@ -42,13 +38,9 @@ Items are in **Fabric Git source format** — produced when you Git-connect a wo
 There are two different first-time paths:
 
 - **Fresh Dev from Git:** use Part A. Git creates the item definitions, but notebook bindings,
-  Environment publication, Dataflow credentials, and all table data still need bootstrapping.
+   Environment publication, and all table data still need bootstrapping.
 - **Fresh target deployed by `NB_04_Deploy`:** use Part B. `NB_04` deploys and rebinds the item
-  definitions, but the Lakehouses are still empty and the Dataflow destination needs a sign-in.
-
-Do not configure the Dataflow destination while every Lakehouse is empty. Its source is
-`Silver_LH.dbo.production_conformed`; until that table exists, Fabric shows **"source query did not
-return a table"**, cannot calculate column mappings, and disables **Save settings**.
+   definitions, but the Lakehouses are still empty until the notebooks run.
 
 ### Key Vault private networking prerequisite
 
@@ -139,34 +131,9 @@ context; an interactive test under a different user does not validate the pipeli
    - `cost_conformed`
    - `schedule_conformed`
 
-6. **Configure the Dataflow source.** Open `DF_Gold_PA` in edit mode. Set its parameters to the Dev
-   workspace's actual IDs:
+6. **Run the Gold notebook.** Run `NB_03_Aggregate_Gold`. It creates:
 
-   - `SilverWorkspaceId` = the current Dev workspace ID
-   - `SilverLakehouseId` = the current Dev `Silver_LH` item ID
-
-   Select `SilverProduction` and refresh its preview. **Do not continue until rows and columns appear.**
-   If it returns no table, recheck the two IDs and confirm the Silver tables were created in the
-   preceding step.
-
-7. **Configure the Dataflow destination.** Select `GoldProductionDaily`, then **Data destination**:
-
-   - Choose **New table**. The table should not exist on a fresh setup.
-   - Select the current Dev workspace → `Gold_LH` → `dbo`.
-   - Enter table name `production_daily` and select **Next**.
-   - Leave **Use automatic settings** enabled. Confirm column mappings are displayed.
-   - Choose the **Replace** update method when shown, sign in to the Lakehouse connection, and select
-     **Save settings**.
-   - Save/publish the Dataflow.
-
-   If **Save settings** is disabled with "source query did not return a table," cancel the destination
-   dialog and return to Step 6. The destination cannot be configured until the Silver preview works.
-
-8. **Run the Dataflow once.** Refresh `DF_Gold_PA` and verify
-   `Gold_LH.dbo.production_daily` now exists. This table must exist before `NB_03` runs.
-
-9. **Run the Gold notebook.** Run `NB_03_Aggregate_Gold`. It requires `production_daily`, creates:
-
+   - `production_daily`
    - `cost_monthly`
    - `schedule_summary`
    - `field_kpi_facts`
@@ -174,18 +141,17 @@ context; an interactive test under a different user does not validate the pipeli
    It then rebinds and refreshes the Direct Lake semantic model `Gold_SM`. On the first run, newly
    created Delta tables can take several minutes to register; let the built-in refresh retry continue.
 
-10. **Validate Dev end to end.** Run `PL_Refresh_Master`. It should complete this fixed sequence:
+7. **Validate Dev end to end.** Run `PL_Refresh_Master`. It should complete this fixed sequence:
 
     ```text
     NB_01_Seed_Bronze
       → NB_02_Transform_Silver
-      → DF_Gold_PA
       → NB_03_Aggregate_Gold
       → Gold_SM refreshed by NB_03
     ```
 
     Open `Gold_Dashboard` and confirm the visuals contain data. From now on, run
-    `PL_Refresh_Master`; the manual notebook/Dataflow sequence above is only for first-time setup.
+   `PL_Refresh_Master`; the manual notebook sequence above is only for first-time setup.
 
 ### Part B — Deploy and bootstrap a fresh target workspace
 
@@ -216,27 +182,15 @@ context; an interactive test under a different user does not validate the pipeli
    Environment build can take ~20 minutes.
 
 6. **Confirm target bindings.** In the target workspace, verify the three notebook attachments match
-   the table in Part A Step 2. Open `DF_Gold_PA` and verify `SilverWorkspaceId` and
-   `SilverLakehouseId` point to the target workspace and its `Silver_LH`; `NB_04` normally rewrites
-   these automatically.
+   the table in Part A Step 2.
 
 7. **Bootstrap Bronze and Silver in the target.** The deployed Lakehouses are empty. Run
-   `NB_01_Seed_Bronze`, then `NB_02_Transform_Silver`. Confirm
-   `Silver_LH.dbo.production_conformed` exists before opening the Dataflow destination settings.
+   `NB_01_Seed_Bronze`, then `NB_02_Transform_Silver`. Confirm the three Silver tables exist.
 
-8. **Confirm and authenticate the Dataflow destination.** Open `DF_Gold_PA` → `GoldProductionDaily`
-   → **Data destination**. It must target the target workspace's `Gold_LH.dbo.production_daily` with
-   Replace behavior. Sign in to the target Lakehouse connection and save/publish the Dataflow.
+8. **Run the target pipeline.** Run `PL_Refresh_Master`. Re-running `NB_01` and `NB_02` is intentional
+   and safe. `NB_03` creates all Gold tables and refreshes `Gold_SM`.
 
-   On an empty target, choose **New table**. If mappings are unavailable, return to Step 7 and verify
-   the `SilverProduction` preview returns rows. Deployment can rewrite destination IDs, but it cannot
-   deploy a user's Dataflow connection credential.
-
-9. **Run the target pipeline.** Run `PL_Refresh_Master`. Re-running `NB_01` and `NB_02` is intentional
-   and safe. The pipeline creates `production_daily`, then runs `NB_03` to create the remaining Gold
-   tables and refresh `Gold_SM`.
-
-10. **Validate the target.** Confirm all four tables exist under `Gold_LH.dbo`:
+9. **Validate the target.** Confirm all four tables exist under `Gold_LH.dbo`:
 
     - `production_daily`
     - `cost_monthly`
@@ -249,23 +203,20 @@ context; an interactive test under a different user does not validate the pipeli
 
 | Before this action | This must already be true |
 | --- | --- |
-| Configure `DF_Gold_PA` destination | `SilverProduction` preview returns a table |
-| Refresh `DF_Gold_PA` | Source IDs are correct and destination connection is signed in |
-| Run `NB_03_Aggregate_Gold` | `Gold_LH.dbo.production_daily` exists |
+| Run `NB_03_Aggregate_Gold` | All three Silver conformed tables exist |
 | Open `Gold_Dashboard` | `NB_03` completed and refreshed `Gold_SM` |
-| Use only `PL_Refresh_Master` for future runs | One-time Dataflow setup is complete |
+| Use only `PL_Refresh_Master` for future runs | Notebook connections are configured |
 
 ## What NB_04 does
 
 **Discovers** every production item outside `Deploy/` and resolves its Dev GUIDs by name → **generates `parameter.yml`** so
-fabric-cicd rewrites each Dev workspace/item GUID to the target → **publishes DataPipeline items only**
-with the interactive notebook user's Fabric token. GitHub Actions publishes the remaining supported
-item types through OIDC.
+fabric-cicd rewrites each Dev workspace/item GUID to the target → **publishes all supported items**
+with the notebook's Fabric token. GitHub Actions provides the automatic OIDC/SPN deployment path.
 
 ## Change loop
 
-Edit in **Dev** → **commit from Fabric** → merge to `main` → GitHub deploys affected non-pipeline
-items → run `NB_04_Deploy` interactively as System admin to publish the pipeline.
+Edit in **Dev** → **commit from Fabric** → merge to `main` → GitHub deploys affected items through
+the OIDC service principal. Use `NB_04_Deploy` only for a manual in-Fabric deployment.
 
 ## Key NB_04 parameters
 
@@ -275,10 +226,8 @@ items → run `NB_04_Deploy` interactively as System admin to publish the pipeli
 | `environment` | `Production` | Stage label used by `parameter.yml` |
 | `dev_workspace_name` | `ws-FabricCICD-DEV` | Source workspace (GUIDs → tokens) |
 | `generate_parameter_yml` | `True` | Auto-build `parameter.yml` from the repo |
-| `publish_item_types` | `{DataPipeline}` | Keep pipeline publication in the interactive user context |
-| `required_publisher_upn` | `admin@mngenvmcap218279.onmicrosoft.com` | Require the System Administrator delegated token; app/SPN tokens are rejected |
-| `rebind_direct_lake` | `True` | Used only when `SemanticModel` is included in the publication scope |
-| `include_lakehouses` | `True` | Used only when `Lakehouse` is included in the publication scope |
+| `rebind_direct_lake` | `True` | Re-point Direct Lake models to the target lakehouse |
+| `include_lakehouses` | `True` | Deploy lakehouses from the repo |
 | `remove_orphans` | `False` | Delete target items no longer in Git |
 
 ## Good to know
@@ -288,8 +237,6 @@ items → run `NB_04_Deploy` interactively as System admin to publish the pipeli
   waits, ~20 min on first run). Only **Git-synced** workspaces (e.g. Dev) need the manual Environment
   publish described in Part A.
 - **Direct Lake on OneLake** can't be rebound by a deployment rule, so `NB_04` does it in code (`semantic-link-labs`; Admin/Member suffices).
-- **The `DF_Gold_PA` credential isn't deployed** — follow the one-time source/destination setup in
-  Part A for Dev and Part B for each deployment target.
 - **Only `NB_04_Deploy` reads Key Vault in the tracked solution.** A private Key Vault requires one
    approved managed private endpoint per Fabric workspace where that notebook executes, plus secret
    read permission for the submitting identity.
@@ -307,7 +254,7 @@ Dev workspace or commit directly to `main` after the initial repository setup.
 2. In Fabric source control, use **Branch out to new workspace** to create a short-lived
    `feature/<work-item>` branch and a dedicated feature workspace. One workspace can connect to only
    one branch, so each developer changes and tests items in that isolated workspace.
-3. Run the feature workspace end to end. Lakehouse table data and Dataflow credentials aren't copied
+3. Run the feature workspace end to end. Lakehouse table data isn't copied
    through Git, so bootstrap them as described in Part A when the feature requires executable data.
 4. Commit from the feature workspace to its feature branch. Never commit secrets or the insecure
    deployment notebook.
@@ -326,9 +273,8 @@ The [production workflow](.github/workflows/deploy-production.yml) runs on every
 `main`, so Fabric items can use any valid root folder name without maintaining path filters. It
 checks out the approved commit, signs in without a client secret by using GitHub OIDC, installs the
 pinned dependencies on the temporary runner, validates the source, and deploys only changed,
-missing, or environment-drifted non-pipeline items to Prod. DataPipeline items are excluded from
-OIDC publication and deletion; after the workflow succeeds, run `NB_04_Deploy` interactively as
-System admin to publish `PL_Refresh_Master`. When a commit deletes an included item's `.platform` file,
+missing, or environment-drifted items to Prod, including notebooks and data pipelines. When a commit
+deletes an item's `.platform` file,
 the same run deletes only that matching Prod item; unrelated Fabric-managed items are preserved.
 The workflow excludes the entire `Deploy/` subtree and removes any existing deployment notebook
 from Prod. `NB_04_Deploy` applies the same rule when it performs a manual deployment.
@@ -397,8 +343,8 @@ Configure it once:
 
 GitHub Actions does **not** run `NB_04`, clone with the Key Vault PAT, or use the Fabric workspace's
 Key Vault managed private endpoint. GitHub checks out the repository with its built-in token and the
-deployment script authenticates to Fabric through OIDC. The workflow deliberately excludes
-`DataPipeline`; `NB_04` is the manual, in-Fabric user-context publication step for that item type.
+deployment script authenticates to Fabric through OIDC. `NB_04` remains available for manual,
+in-Fabric deployment.
 
 Notebook runtime identity is configured on each activity under **Settings → Connection**; changing
 pipeline or item ownership is not a substitute for an explicit Notebook activity connection.
@@ -411,13 +357,13 @@ without deliberately adding a credential. Do not substitute the pipeline's `Last
 ### What "only changed items" means
 
 The workflow compares the pushed commit with the push event's previous commit and passes only changed
-non-pipeline Fabric item folders to `publish_all_items()`. It also includes included repository items missing from Prod, so
+Fabric item folders to `publish_all_items()`. It also includes repository items missing from Prod, so
 the same command can bootstrap newly added items. Semantic models whose deployed connection still
 contains the Dev workspace ID are included as environment drift and repaired even when their Git
 folder did not change. Use `--full-deploy` only for a deliberate complete bootstrap or recovery.
 
 Environment replacement still runs for every selected item. Notebook default and known lakehouse
-IDs, dataflow source/destination IDs, pipeline logical item references, and zero workspace placeholders
+IDs, pipeline logical item references, and zero workspace placeholders
 resolve to their Prod counterparts. Direct Lake on OneLake models receive both the Prod workspace ID
 and matching Prod lakehouse ID in the same semantic-model publish transaction; there is no separate
 post-publish XMLA save.
@@ -434,20 +380,6 @@ type and display name. The workflow does not use broad orphan removal, so Fabric
 Lakehouses and other workspace-only operational items are not affected.
 
 ## Troubleshooting
-
-### `DF_Gold_PA` refresh: "Something went wrong" / "credentials are missing or invalid"
-
-Generic `ActionUserFailure`; Refresh history shows `Data source credentials are missing or invalid`
-(`999999`) on `GoldProductionDaily_WriteToDataDestination`. Usually **transient**: a SQL login
-failure (`18456`) opening the Gen2 staging warehouse (`StagingLakehouseForDataflows_*`) after a
-mid-refresh backend update invalidated the token \u2014 the source query succeeds, only the write fails.
-Fix in order:
-
-1. **Re-run** the dataflow / `PL_Refresh_Master` \u2014 usually clears next run.
-2. If it persists, **`DF_Gold_PA` \u2192 Edit \u2192 sign in again**, **Save**, refresh.
-3. If recurring, bind the connection to a **service principal** so a backend roll doesn't drop the session.
-
-> `404 ... path does not exist` lines are normal existence probes, not the failure.
 
 ### `Gold_SM` refresh fails on a stage's **first** run (`0xC14700DF`)
 

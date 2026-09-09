@@ -56,32 +56,6 @@
         "name": "NB_Aggregate_GOLD",
         "dependsOn": [
           {
-            "activity": "DF_Gold",
-            "dependencyConditions": [
-              "Succeeded"
-            ]
-          }
-        ]
-      },
-      {
-        "type": "RefreshDataflow",
-        "typeProperties": {
-          "dataflowId": "0cf6db80-eaf9-9f2e-4df0-00fbb23c65fc",
-          "workspaceId": "00000000-0000-0000-0000-000000000000",
-          "notifyOption": "NoNotification",
-          "dataflowType": "DataflowFabric",
-          "executeMashupQueriesOnly": true
-        },
-        "policy": {
-          "timeout": "0.12:00:00",
-          "retry": 2,
-          "retryIntervalInSeconds": 30,
-          "secureInput": false,
-          "secureOutput": false
-        },
-        "name": "DF_Gold",
-        "dependsOn": [
-          {
             "activity": "NB_Transform_Silver",
             "dependencyConditions": [
               "Succeeded"
