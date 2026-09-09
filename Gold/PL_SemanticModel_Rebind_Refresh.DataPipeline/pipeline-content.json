@@ -2,20 +2,20 @@
   "properties": {
     "activities": [
       {
-        "name": "SemanticModelRefreshRebind",
         "type": "TridentNotebook",
-        "dependsOn": [],
+        "typeProperties": {
+          "notebookId": "a6838dc9-1db8-46dc-8991-696054647e18",
+          "workspaceId": "00000000-0000-0000-0000-000000000000"
+        },
         "policy": {
           "timeout": "0.12:00:00",
           "retry": 0,
           "retryIntervalInSeconds": 30,
-          "secureOutput": false,
-          "secureInput": false
+          "secureInput": false,
+          "secureOutput": false
         },
-        "typeProperties": {
-          "notebookId": "a6838dc9-1db8-46dc-8991-696054647e18",
-          "workspaceId": "00000000-0000-0000-0000-000000000000"
-        }
+        "name": "SemanticModelRefreshRebind",
+        "dependsOn": []
       }
     ]
   }
