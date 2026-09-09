@@ -165,11 +165,12 @@ print(f"✅ Gold_LH.field_kpi_facts: {df_kpi_facts.count()} rows")
 
 # Cell 6 — Validate Gold and refresh the Direct Lake model
 import sempy_labs as labs
-import sempy.fabric as fabric
 from sempy_labs import directlake
 from importlib.metadata import version as package_version
 import notebookutils
+import requests
 import time
+from urllib.parse import urljoin
 
 _EXPECTED_TABLES = ["production_daily", "cost_monthly", "schedule_summary", "field_kpi_facts"]
 _EXPECTED_PACKAGES = {
@@ -183,14 +184,7 @@ if _loaded_packages != _EXPECTED_PACKAGES:
         f"Unexpected Semantic Link runtime: {_loaded_packages}; expected {_EXPECTED_PACKAGES}. "
         "Publish the semanticlink Environment and start this notebook in a new Spark session."
     )
-
-_pbi_base_url = fabric.PowerBIRestClient().default_base_url
-if not _pbi_base_url.startswith("https://api.powerbi.com/"):
-    raise RuntimeError(
-        f"PowerBIRestClient resolved to '{_pbi_base_url}', not 'https://api.powerbi.com/'. "
-        "Publish the pinned semanticlink Environment and start this notebook in a new Spark session."
-    )
-print(f"Semantic Link runtime verified: {_loaded_packages}; Power BI API: {_pbi_base_url}")
+print(f"Semantic Link runtime verified: {_loaded_packages}")
 
 # Resolve the current workspace at runtime.
 _ws_id = notebookutils.runtime.context.get("currentWorkspaceId") or spark.conf.get("trident.workspace.id")
@@ -204,6 +198,72 @@ for _tbl in _EXPECTED_TABLES:
 _SEMANTIC_MODEL = "Gold_SM"
 _MAX_ATTEMPTS   = 15         # total tries
 _BACKOFF_SECS   = 120        # wait between tries (create-from-scratch sync can run ~10 min+)
+_POLL_SECS      = 5
+_REFRESH_TIMEOUT_SECS = 7200
+
+def _resolve_semantic_model_id():
+    token = notebookutils.credentials.getToken("https://api.fabric.microsoft.com")
+    response = requests.get(
+        f"https://api.fabric.microsoft.com/v1/workspaces/{_ws_id}/items",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"type": "SemanticModel"},
+        timeout=60,
+    )
+    response.raise_for_status()
+    matches = [item for item in response.json().get("value", []) if item.get("displayName") == _SEMANTIC_MODEL]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"Expected one semantic model named '{_SEMANTIC_MODEL}' in workspace {_ws_id}, "
+            f"found {len(matches)}."
+        )
+    return matches[0]["id"]
+
+def _refresh_semantic_model(dataset_id):
+    token = notebookutils.credentials.getToken("pbi")
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    refresh_url = (
+        f"https://api.powerbi.com/v1.0/myorg/groups/{_ws_id}/datasets/{dataset_id}/refreshes"
+    )
+    response = requests.post(
+        refresh_url,
+        headers=headers,
+        json={
+            "type": "full",
+            "commitMode": "transactional",
+            "maxParallelism": 10,
+            "retryCount": 0,
+            "applyRefreshPolicy": True,
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
+    poll_location = response.headers.get("Location")
+    if not poll_location:
+        raise RuntimeError("Power BI accepted the refresh but returned no polling URL.")
+    poll_url = urljoin(refresh_url, poll_location)
+
+    deadline = time.monotonic() + _REFRESH_TIMEOUT_SECS
+    while time.monotonic() < deadline:
+        status_response = requests.get(poll_url, headers=headers, timeout=60)
+        if status_response.status_code == 429 or status_response.status_code >= 500:
+            retry_after = int(status_response.headers.get("Retry-After", _POLL_SECS))
+            time.sleep(retry_after)
+            continue
+        status_response.raise_for_status()
+        details = status_response.json()
+        status = details.get("status")
+        if status == "Completed":
+            return
+        if status in {"Failed", "Cancelled"}:
+            messages = details.get("messages") or []
+            raise RuntimeError(f"Power BI refresh ended with status {status}: {messages}")
+        time.sleep(_POLL_SECS)
+
+    raise TimeoutError(
+        f"Power BI refresh did not complete within {_REFRESH_TIMEOUT_SECS // 60} minutes."
+    )
+
+_semantic_model_id = _resolve_semantic_model_id()
 
 # Rebind defensively before refreshing.
 _GOLD_LAKEHOUSE = "Gold_LH"
@@ -221,9 +281,7 @@ print(f"\n── Refreshing Direct Lake (on OneLake) model '{_SEMANTIC_MODEL}' (
 _refreshed = False
 for _attempt in range(1, _MAX_ATTEMPTS + 1):
     try:
-        labs.refresh_semantic_model(
-            dataset=_SEMANTIC_MODEL, workspace=_ws_id, refresh_type="full",
-        )
+        _refresh_semantic_model(_semantic_model_id)
         print(f"✅ '{_SEMANTIC_MODEL}' refreshed on attempt {_attempt}/{_MAX_ATTEMPTS} "
               f"(Direct Lake reframe complete) — report is up to date.")
         _refreshed = True
@@ -233,25 +291,20 @@ for _attempt in range(1, _MAX_ATTEMPTS + 1):
         _msg_lower = _msg.lower()
         _response = getattr(_e, "response", None)
         _status_code = getattr(_e, "status_code", None) or getattr(_response, "status_code", None)
-        _wrong_endpoint = "api.fabric.microsoft.com" in _msg_lower and "/refreshes" in _msg_lower
-        if _wrong_endpoint:
-            raise RuntimeError(
-                "Semantic Link attempted a Power BI semantic-model refresh through the Fabric REST "
-                f"endpoint. Loaded packages: {_loaded_packages}. Publish the pinned semanticlink "
-                "Environment and start this notebook in a new Spark session. Original error: "
-                f"{_e}"
-            ) from _e
-
         _powerbi_refresh_403 = (
             (_status_code == 403 or "403 forbidden" in _msg_lower)
             and "api.powerbi.com" in _msg_lower
             and "/datasets/" in _msg_lower
             and "/refreshes" in _msg_lower
         )
+        _retryable_http_status = _status_code == 429 or (
+            _status_code is not None and _status_code >= 500
+        )
         _transient = (
             "0xC14700DF" in _msg
             or "do not exist or access" in _msg_lower
             or _powerbi_refresh_403
+            or _retryable_http_status
         )
         if _transient and _attempt < _MAX_ATTEMPTS:
             print(f"⏳ Attempt {_attempt}/{_MAX_ATTEMPTS}: semantic-model refresh is not ready; "

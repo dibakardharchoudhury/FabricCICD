@@ -32,7 +32,9 @@ EXPECTED_GOLD_SNIPPETS = {
     '_write_gold(df_kpi_facts, "field_kpi_facts")',
     '"semantic-link-labs": "0.16.0"',
     '"semantic-link-sempy": "0.14.1"',
-    'fabric.PowerBIRestClient().default_base_url',
+    'notebookutils.credentials.getToken("pbi")',
+    'https://api.powerbi.com/v1.0/myorg/groups/',
+    'def _refresh_semantic_model(dataset_id):',
     "_powerbi_refresh_403",
 }
 EXPECTED_ENVIRONMENT_PIP = {

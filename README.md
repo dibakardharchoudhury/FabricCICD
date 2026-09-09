@@ -399,8 +399,8 @@ Automated target deployment publishes changed Environment definitions and waits 
 ### `Gold_SM` refresh fails with `api.fabric.microsoft.com/.../refreshes`
 
 Semantic-model refresh is a Power BI REST operation and must use `api.powerbi.com` with a
-`/datasets/{id}/refreshes` route. The Environment pins `semantic-link-labs==0.16.0` and
-`semantic-link-sempy==0.14.1`, and `NB_03` verifies both package versions and the client base URL
-before refreshing. If this guard fails after an Environment update, publish `semanticlink` and start
-the notebook in a new Spark session. A `403` from the correct Power BI refresh route is handled by
-the bounded first-run retry loop; a Fabric-host refresh route is a non-retryable runtime mismatch.
+`/datasets/{id}/refreshes` route. Some Semantic Link versions resolve `PowerBIRestClient` to the
+Fabric REST host, so `NB_03` bypasses that client for refresh: it obtains the notebook runtime's
+Power BI token, submits the documented Power BI REST request, and polls the returned operation URL.
+The Environment remains pinned for reproducible Direct Lake rebinding behavior. A `403` from the
+correct Power BI refresh route is handled by the bounded first-run retry loop.
