@@ -218,15 +218,27 @@ def main() -> None:
 
     deploy_path = ROOT / "scripts" / "deploy_to_fabric.py"
     deploy_source = deploy_path.read_text(encoding="utf-8-sig")
-    for excluded_item in (
+    for administrator_owned_item in (
         '("Notebook", "NB_04_SemanticModelReBindRefresh")',
         '("DataPipeline", "PL_SemanticModel_Rebind_Refresh")',
     ):
-        if excluded_item not in deploy_source:
-            failures.append(f"{deploy_path.relative_to(ROOT)}: missing deployment exclusion {excluded_item}")
+        if administrator_owned_item not in deploy_source:
+            failures.append(
+                f"{deploy_path.relative_to(ROOT)}: missing administrator ownership declaration "
+                f"{administrator_owned_item}"
+            )
+    for forbidden_exclusion in (
+        "DEPLOYMENT_EXCLUDED_ITEMS",
+        "Skipping deployment-excluded deletion",
+    ):
+        if forbidden_exclusion in deploy_source:
+            failures.append(
+                f"{deploy_path.relative_to(ROOT)}: tracked Fabric items must not be deployment-excluded: "
+                f"{forbidden_exclusion}"
+            )
     if "publish_all_items(workspace, items_to_include=reconciliation_items)" not in deploy_source:
         failures.append(
-            f"{deploy_path.relative_to(ROOT)}: full reconciliation must preserve item exclusions"
+            f"{deploy_path.relative_to(ROOT)}: full reconciliation must publish discovered items"
         )
 
     production_workflow_path = ROOT / ".github" / "workflows" / "deploy-production.yml"

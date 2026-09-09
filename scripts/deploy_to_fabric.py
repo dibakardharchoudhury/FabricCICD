@@ -46,7 +46,6 @@ ADMIN_OWNED_ITEMS = {
     ("Notebook", "NB_04_SemanticModelReBindRefresh"),
     ("DataPipeline", "PL_SemanticModel_Rebind_Refresh"),
 }
-DEPLOYMENT_EXCLUDED_ITEMS = ADMIN_OWNED_ITEMS
 ADMIN_UPN = "admin@mngenvmcap218279.onmicrosoft.com"
 ADMIN_OBJECT_ID = "7ab1a6b2-d2e6-41b8-92ba-1fb3a8ba5bc0"
 
@@ -239,9 +238,6 @@ def delete_removed_items(
         (item["type"], item["displayName"]): item["id"] for item in target_items
     }
     for item_type, display_name in deleted_items:
-        if (item_type, display_name) in DEPLOYMENT_EXCLUDED_ITEMS:
-            print(f"Skipping deployment-excluded deletion: {display_name}.{item_type}")
-            continue
         item_id = target_by_type_name.get((item_type, display_name))
         if item_id is None:
             print(f"Git-removed item already absent: {display_name}.{item_type}")
@@ -341,11 +337,7 @@ def select_items_to_publish(
             selected.add(f"{display_name}.{item_type}")
             print(f"Selected {display_name}.{item_type}: its connection still points to Dev")
 
-    return sorted(
-        item
-        for item in selected
-        if tuple(reversed(item.rsplit(".", 1))) not in DEPLOYMENT_EXCLUDED_ITEMS
-    )
+    return sorted(selected)
 
 
 def verify_admin_identity(credential: Any) -> None:
@@ -381,10 +373,6 @@ def main() -> None:
         verify_admin_identity(credential)
         repository_items = [
             item for item in repository_items if (item[0], item[1]) in ADMIN_OWNED_ITEMS
-        ]
-    else:
-        repository_items = [
-            item for item in repository_items if (item[0], item[1]) not in DEPLOYMENT_EXCLUDED_ITEMS
         ]
     remove_generated_item_artifacts(repository_items)
     item_types = sorted(
@@ -423,7 +411,7 @@ def main() -> None:
             f"{name}.{item_type}" for item_type, name, _path in repository_items
         )
         print(
-            "Full reconciliation requested; publishing all dynamically discovered ordinary items: "
+            "Full reconciliation requested; publishing all dynamically discovered items: "
             + ", ".join(reconciliation_items)
         )
         publish_all_items(workspace, items_to_include=reconciliation_items)
