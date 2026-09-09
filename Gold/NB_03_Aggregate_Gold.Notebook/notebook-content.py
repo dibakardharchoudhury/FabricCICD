@@ -173,6 +173,8 @@ PowerBIRestClient._get_default_base_url = _powerbi_base_url
 
 import sempy_labs as labs
 from sempy_labs import directlake
+import base64
+import json
 import notebookutils
 import time
 
@@ -205,6 +207,17 @@ print(f"🔗 '{_SEMANTIC_MODEL}' Direct Lake connection re-pointed to '{_GOLD_LA
 
 print(f"\n── Refreshing Direct Lake (on OneLake) model '{_SEMANTIC_MODEL}' (full reframe) ──")
 print(f"Semantic Link Power BI endpoint: {PowerBIRestClient().default_base_url}")
+_pbi_token = notebookutils.credentials.getToken("pbi")
+_pbi_payload = _pbi_token.split(".")[1]
+_pbi_payload += "=" * (-len(_pbi_payload) % 4)
+_pbi_claims = json.loads(base64.urlsafe_b64decode(_pbi_payload).decode("utf-8"))
+print(
+    "Semantic Link caller: "
+    f"idtyp={_pbi_claims.get('idtyp', '(not set)')}, "
+    f"oid={_pbi_claims.get('oid', '(not set)')}, "
+    f"appid={_pbi_claims.get('appid', _pbi_claims.get('azp', '(not set)'))}, "
+    f"aud={_pbi_claims.get('aud', '(not set)')}"
+)
 _refreshed = False
 for _attempt in range(1, _MAX_ATTEMPTS + 1):
     try:
@@ -217,7 +230,10 @@ for _attempt in range(1, _MAX_ATTEMPTS + 1):
         break
     except Exception as _e:
         _msg = str(_e)
-        _transient = ("0xC14700DF" in _msg) or ("do not exist or access" in _msg.lower())
+        _forbidden = "403 Forbidden" in _msg
+        _transient = not _forbidden and (
+            ("0xC14700DF" in _msg) or ("do not exist or access" in _msg.lower())
+        )
         if _transient and _attempt < _MAX_ATTEMPTS:
             print(f"⏳ Attempt {_attempt}/{_MAX_ATTEMPTS}: tables still syncing into metadata after "
                   f"create-from-scratch; retrying in {_BACKOFF_SECS}s "
@@ -225,15 +241,20 @@ for _attempt in range(1, _MAX_ATTEMPTS + 1):
             time.sleep(_BACKOFF_SECS)
             continue
 
+        _failure_guidance = (
+            "  • The Power BI API returned 403 for the correct api.powerbi.com endpoint. The pipeline's\n"
+            "    Power BI token is valid but its caller does not have permission to refresh this semantic\n"
+            "    model. Match the oid/appid printed above to the Notebook activity connection, then grant\n"
+            "    that principal a workspace role with semantic-model write access. Deployment identity and\n"
+            "    Notebook activity execution identity are separate. Retrying will not resolve this 403."
+            if _forbidden else
+            "  • 0xC14700DF / 'do not exist or access' can indicate create-from-scratch metadata sync.\n"
+            "    Extend _MAX_ATTEMPTS or _BACKOFF_SECS if the first-run sync exceeds this retry window."
+        )
         raise Exception(
             f"Refresh of Direct Lake (on OneLake) model '{_SEMANTIC_MODEL}' FAILED after "
             f"{_attempt} attempt(s) (~{((_attempt - 1) * _BACKOFF_SECS) // 60} min of waiting): {_e}\n"
-            f"  • 0xC14700DF / 'do not exist or access' here means the create-from-scratch metadata sync\n"
-            f"    still had not completed within the retry window. This is NOT a permission/ownership\n"
-            f"    issue — the same identity refreshes cleanly once the sync finishes. Raise _MAX_ATTEMPTS\n"
-            f"    and/or _BACKOFF_SECS above to extend the window if a stage's first-run sync is slower.\n"
-            f"  • Re-running this notebook (or the pipeline) after a few minutes will also succeed, since\n"
-            f"    by then the tables are fully registered."
+            f"{_failure_guidance}"
         ) from _e
 
 print("🏆 Gold aggregation COMPLETE — tables written, Gold_SM refreshed")

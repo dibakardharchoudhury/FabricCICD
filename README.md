@@ -403,3 +403,13 @@ host, while `semantic-link-labs` supplies a Power BI `/v1.0/myorg/.../refreshes`
 overrides the client's default-URL resolver to return `https://api.powerbi.com/` before importing
 Labs, then keeps using `labs.refresh_semantic_model`. Interactive sessions may not reproduce this
 because an existing SemPy client can already have the Power BI base URL cached.
+
+### Pipeline refresh calls `api.powerbi.com/.../refreshes` but returns `403`
+
+This is an authorization failure, not first-run metadata propagation. `NB_03` prints the non-secret
+`idtyp`, `oid`, `appid`, and `aud` claims from the Power BI token used by the pipeline session. Match
+that caller to the Notebook activity's **Settings → Connection** identity and grant that principal
+semantic-model write access in the target workspace. A successful GitHub deployment does not prove
+this permission: the GitHub OIDC service principal publishes the notebook definition, while the
+Notebook activity executes with its configured connection identity. Re-running without changing
+that identity or its access will return the same `403`.
