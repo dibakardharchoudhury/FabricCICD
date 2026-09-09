@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import re
 import subprocess
 
 import yaml
@@ -71,10 +72,21 @@ def main() -> None:
         if path.name == "notebook-content.py" or path.parent == ROOT / "scripts" and path.suffix == ".py"
     ]
     for path in python_paths:
+        source = path.read_text(encoding="utf-8-sig")
         try:
-            compile(path.read_text(encoding="utf-8"), str(path), "exec")
+            compile(source, str(path), "exec")
         except (SyntaxError, UnicodeDecodeError) as error:
             failures.append(f"{path.relative_to(ROOT)}: {error}")
+        if path.name == "notebook-content.py" and not re.match(
+            r"\A# Fabric notebook source\r?\n\r?\n"
+            r"# METADATA \*+\r?\n\r?\n"
+            r"(?:# META[^\r\n]*\r?\n)+\r?\n"
+            r"# CELL \*+",
+            source,
+        ):
+            failures.append(
+                f"{path.relative_to(ROOT)}: notebook metadata must be followed by a CELL marker"
+            )
 
     json_paths = [
         path for path in tracked_paths

@@ -27,6 +27,8 @@
 # META   }
 # META }
 
+# CELL ********************
+
 # Aggregates Silver data into report-ready Gold tables.
 
 # Cell 1 — Imports
