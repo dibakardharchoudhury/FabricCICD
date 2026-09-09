@@ -1,10 +1,9 @@
 # Microsoft Fabric CI/CD - Medallion Demo
 
 This repository promotes a Bronze -> Silver -> Gold Microsoft Fabric solution with
-[`fabric-cicd`](https://microsoft.github.io/fabric-cicd/). Production deployment has one supported
-path: GitHub Actions authenticates through OIDC and runs `scripts/deploy_to_fabric.py`. There is no
-deployment notebook, GitHub PAT, client secret, interactive OAuth connection, or checked-in
-environment parameter file.
+[`fabric-cicd`](https://microsoft.github.io/fabric-cicd/). GitHub Actions deploys normal items with
+OIDC. The refresh notebook and its pipeline are published separately by the designated Entra user,
+without a GitHub PAT, client secret, or checked-in environment parameter file.
 
 ## Data flow
 
@@ -15,7 +14,7 @@ Silver_LH <- NB_02_Transform_Silver
     |
 Gold_LH   <- NB_03_Aggregate_Gold
     |
-Gold_SM (Direct Lake) -> Gold_Dashboard
+NB_04_SemanticModelReBindRefresh -> Gold_SM (Direct Lake) -> Gold_Dashboard
 ```
 
 `PL_Refresh_Master` runs three notebook activities in order:
@@ -24,9 +23,8 @@ Gold_SM (Direct Lake) -> Gold_Dashboard
 2. `NB_02_Transform_Silver`
 3. `NB_03_Aggregate_Gold`
 
-NB03 writes the Gold tables and rebinds `Gold_SM` to the current workspace's `Gold_LH`. Pipeline
-runs do not refresh the semantic model because service-principal-triggered notebook runs cannot use
-that Semantic Link function without adding separate credentials.
+NB03 writes the Gold tables. `PL_SemanticModel_Rebind_Refresh` then runs NB04 to validate the Gold
+tables, rebind `Gold_SM` to the current workspace's `Gold_LH`, and perform a full model refresh.
 
 ## Repository layout
 
@@ -56,6 +54,22 @@ The deployer resolves both workspace IDs by display name at runtime. It then:
 7. Publishes changed, missing, or environment-drifted items.
 8. Deletes only Fabric items whose `.platform` file was deleted in the compared Git range.
 9. Removes `parameter.yml` on process exit, including failed deployments.
+
+The normal OIDC path excludes `NB_04_SemanticModelReBindRefresh` and
+`PL_SemanticModel_Rebind_Refresh` from publication and deletion so the service principal cannot
+replace their publisher. Publish only those items from an Azure CLI session authenticated as
+`admin@mngenvmcap218279.onmicrosoft.com`:
+
+```powershell
+.venv\Scripts\python.exe scripts\deploy_to_fabric.py `
+    --target-workspace ws-FabricCICD-PROD `
+    --dev-workspace ws-FabricCICD-DEV `
+    --environment Production `
+    --repository-directory . `
+    --admin-owned-only
+```
+
+The command verifies both the user's Entra UPN and object ID before publishing.
 
 The source references have separate meanings:
 
@@ -94,12 +108,14 @@ Notebook connection.
 5. Merge the approved pull request into `main`.
 6. Let `.github/workflows/deploy-production.yml` deploy Production.
 7. Run `PL_Refresh_Master` in Production and verify all three activities.
+8. Publish the two protected refresh items with `--admin-owned-only`, then run
+    `PL_SemanticModel_Rebind_Refresh` and verify it completes.
 
 Use `--full-deploy` only for a complete bootstrap or recovery.
 
 ## Fresh workspace validation
 
-The `semanticlink` Environment must be published before NB03 can import `sempy_labs`. After the
+The `semanticlink` Environment must be published before NB04 can import `sempy_labs`. After the
 first deployment, run `PL_Refresh_Master` and verify:
 
 | Lakehouse | Tables |
@@ -108,11 +124,11 @@ first deployment, run `PL_Refresh_Master` and verify:
 | `Silver_LH.dbo` | `production_conformed`, `cost_conformed`, `schedule_conformed` |
 | `Gold_LH.dbo` | `production_daily`, `cost_monthly`, `schedule_summary`, `field_kpi_facts` |
 
-After the pipeline succeeds, verify that NB03 completed the Direct Lake rebind. Wait about two
-minutes for the new or updated Delta table metadata to become visible to Direct Lake, then refresh
-the semantic model separately.
+After the master pipeline succeeds, run `PL_SemanticModel_Rebind_Refresh`. NB04 uses the same
+dynamic `Gold_LH` and `semanticlink` dependencies as NB03, rebinds the model, and retries transient
+Direct Lake metadata synchronization failures before reporting success.
 
-### Refresh Gold_SM manually
+### Manual refresh fallback
 
 1. Open the target Fabric workspace.
 2. After `PL_Refresh_Master` and NB03 complete, wait about two minutes for Direct Lake metadata
@@ -127,10 +143,10 @@ the table is present in `Gold_LH.dbo`, allow more time for metadata synchronizat
 error can be transient immediately after deployment, first-time table creation, or Direct Lake
 rebinding.
 
-### Schedule Gold_SM in Production
+### Scheduled refresh alternative
 
-Production should normally use the semantic model's own refresh schedule instead of coupling model
-refresh to NB03:
+If the dedicated refresh pipeline is intentionally disabled, Production can use the semantic
+model's own refresh schedule:
 
 1. Open `Gold_SM` in the Production workspace and select **Settings**.
 2. Open **Refresh** or **Scheduled refresh**, enable the schedule, and set the time zone and desired
@@ -139,20 +155,19 @@ refresh to NB03:
     metadata synchronization buffer in addition to notebook runtime and first-run table creation.
 4. Save the schedule and monitor both pipeline history and semantic model refresh history separately.
 
-This design keeps deployment credential-free and lets Fabric retry and monitor the data pipeline and
-semantic model as independent Production operations.
+Do not run this schedule at the same time as `PL_SemanticModel_Rebind_Refresh`.
 
 ## Troubleshooting
 
-### NB03 cannot import `sempy_labs`
+### NB04 cannot import `sempy_labs`
 
 Publish the `semanticlink` Environment and wait for its library build to finish. Git synchronization
 creates the Environment definition but does not build it.
 
-### Gold_SM is not current after the pipeline
+### Gold_SM is not current after the master pipeline
 
-This is expected because NB03 does not refresh the model. Use **Refresh now** for ad hoc validation or check
-the Production semantic model schedule and refresh history.
+NB03 only writes Gold tables. Run `PL_SemanticModel_Rebind_Refresh`, then check its run history and
+the semantic model refresh history.
 
 ### First Direct Lake frame reports `0xC14700DF`
 

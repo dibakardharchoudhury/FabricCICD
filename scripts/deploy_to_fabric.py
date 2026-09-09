@@ -238,6 +238,9 @@ def delete_removed_items(
         (item["type"], item["displayName"]): item["id"] for item in target_items
     }
     for item_type, display_name in deleted_items:
+        if (item_type, display_name) in ADMIN_OWNED_ITEMS:
+            print(f"Skipping administrator-owned deletion: {display_name}.{item_type}")
+            continue
         item_id = target_by_type_name.get((item_type, display_name))
         if item_id is None:
             print(f"Git-removed item already absent: {display_name}.{item_type}")
@@ -371,7 +374,8 @@ def main() -> None:
     target_workspace_id = api.resolve_workspace_id(args.target_workspace)
     print(f"Dev workspace: {args.dev_workspace} ({dev_workspace_id})")
     print(f"Target workspace: {args.target_workspace} ({target_workspace_id})")
-    repository_items = discover_items(repository_directory)
+    all_repository_items = discover_items(repository_directory)
+    repository_items = all_repository_items
     if args.admin_owned_only:
         verify_admin_identity(credential)
         repository_items = [
@@ -392,7 +396,7 @@ def main() -> None:
     atexit.register(parameter_file.unlink, missing_ok=True)
     generate_parameters(
         repository_directory,
-        repository_items,
+        all_repository_items,
         dev_workspace_id,
         args.environment,
         api,

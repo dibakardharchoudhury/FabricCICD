@@ -217,6 +217,8 @@ def main() -> None:
     refresh_path = ROOT / "Gold" / f"{REFRESH_NOTEBOOK}.Notebook" / "notebook-content.py"
     refresh_source = refresh_path.read_text(encoding="utf-8-sig")
     for snippet in (
+        '"default_lakehouse_name": "Gold_LH"',
+        '"environmentId": "86313016-e213-a285-4d09-9801e4f0072b"',
         "directlake.update_direct_lake_model_connection(",
         "labs.refresh_semantic_model(",
         "refresh_semantic_model = True",
