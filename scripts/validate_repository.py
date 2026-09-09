@@ -214,6 +214,16 @@ def main() -> None:
                 f"{gold_path.relative_to(ROOT)}: contains removed refresh logic: {removed_snippet}"
             )
 
+    deploy_path = ROOT / "scripts" / "deploy_to_fabric.py"
+    deploy_source = deploy_path.read_text(encoding="utf-8-sig")
+    for excluded_item in (
+        '("Notebook", "NB_04_SemanticModelReBindRefresh")',
+        '("DataPipeline", "PL_SemanticModel_Rebind_Refresh")',
+        '("DataPipeline", "PL_Refresh_SemanticModel")',
+    ):
+        if excluded_item not in deploy_source:
+            failures.append(f"{deploy_path.relative_to(ROOT)}: missing deployment exclusion {excluded_item}")
+
     refresh_path = ROOT / "Gold" / f"{REFRESH_NOTEBOOK}.Notebook" / "notebook-content.py"
     refresh_source = refresh_path.read_text(encoding="utf-8-sig")
     for snippet in (

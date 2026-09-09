@@ -46,6 +46,9 @@ ADMIN_OWNED_ITEMS = {
     ("Notebook", "NB_04_SemanticModelReBindRefresh"),
     ("DataPipeline", "PL_SemanticModel_Rebind_Refresh"),
 }
+DEPLOYMENT_EXCLUDED_ITEMS = ADMIN_OWNED_ITEMS | {
+    ("DataPipeline", "PL_Refresh_SemanticModel"),
+}
 ADMIN_UPN = "admin@mngenvmcap218279.onmicrosoft.com"
 ADMIN_OBJECT_ID = "7ab1a6b2-d2e6-41b8-92ba-1fb3a8ba5bc0"
 
@@ -238,8 +241,8 @@ def delete_removed_items(
         (item["type"], item["displayName"]): item["id"] for item in target_items
     }
     for item_type, display_name in deleted_items:
-        if (item_type, display_name) in ADMIN_OWNED_ITEMS:
-            print(f"Skipping administrator-owned deletion: {display_name}.{item_type}")
+        if (item_type, display_name) in DEPLOYMENT_EXCLUDED_ITEMS:
+            print(f"Skipping deployment-excluded deletion: {display_name}.{item_type}")
             continue
         item_id = target_by_type_name.get((item_type, display_name))
         if item_id is None:
@@ -343,7 +346,7 @@ def select_items_to_publish(
     return sorted(
         item
         for item in selected
-        if tuple(reversed(item.rsplit(".", 1))) not in ADMIN_OWNED_ITEMS
+        if tuple(reversed(item.rsplit(".", 1))) not in DEPLOYMENT_EXCLUDED_ITEMS
     )
 
 
@@ -383,7 +386,7 @@ def main() -> None:
         ]
     else:
         repository_items = [
-            item for item in repository_items if (item[0], item[1]) not in ADMIN_OWNED_ITEMS
+            item for item in repository_items if (item[0], item[1]) not in DEPLOYMENT_EXCLUDED_ITEMS
         ]
     remove_generated_item_artifacts(repository_items)
     item_types = sorted(

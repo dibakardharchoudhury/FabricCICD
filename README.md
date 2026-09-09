@@ -70,6 +70,8 @@ replace their publisher. Publish only those items from an Azure CLI session auth
 ```
 
 The command verifies both the user's Entra UPN and object ID before publishing.
+The connection-bound Dev item `PL_Refresh_SemanticModel` is also retained in Git but excluded from
+promotion because its native refresh activity references a user-scoped Fabric connection.
 
 The source references have separate meanings:
 
