@@ -45,7 +45,7 @@ jobs:
       - name: Validate approved source
         run: python scripts/validate_repository.py
 
-      - name: Deploy changed Fabric definitions
+      - name: Deploy OIDC-owned Fabric definitions
         run: >-
           python scripts/deploy_to_fabric.py
           --target-workspace "${{ vars.FABRIC_PROD_WORKSPACE }}"

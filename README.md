@@ -1,9 +1,9 @@
 # Microsoft Fabric CI/CD - Medallion Demo
 
 This repository promotes a Bronze -> Silver -> Gold Microsoft Fabric solution with
-[`fabric-cicd`](https://microsoft.github.io/fabric-cicd/). GitHub Actions dynamically deploys every
-tracked Fabric item with OIDC, without a GitHub PAT, client secret, or checked-in environment
-parameter file.
+[`fabric-cicd`](https://microsoft.github.io/fabric-cicd/). GitHub Actions dynamically deploys the
+OIDC-owned Fabric items without a GitHub PAT, client secret, or checked-in environment parameter
+file. NB04 and its refresh pipeline use a separate administrator-authenticated deployment lane.
 
 ## Data flow
 
@@ -53,14 +53,13 @@ The deployer resolves both workspace IDs by display name at runtime. It then:
 4. Replaces the current-workspace placeholder with the target workspace ID.
 5. Replaces pipeline logical item IDs with target item IDs.
 6. Replaces source Lakehouse IDs with target Lakehouse IDs.
-7. Publishes every changed, new, missing, or environment-drifted item, including NB04 and its pipeline.
+7. Publishes every changed, new, missing, or environment-drifted OIDC-owned item.
 8. Deletes only Fabric items whose `.platform` file was deleted in the compared Git range.
 9. Removes `parameter.yml` on process exit, including failed deployments.
 
-`NB_04_SemanticModelReBindRefresh` and `PL_SemanticModel_Rebind_Refresh` must be owned by
-`admin@mngenvmcap218279.onmicrosoft.com`. They participate in the normal dynamic GitHub deployment
-after they exist. For initial creation or ownership repair, publish only those two from an Azure CLI
-session authenticated as that administrator:
+`NB_04_SemanticModelReBindRefresh` and `PL_SemanticModel_Rebind_Refresh` must be created and updated
+only as `admin@mngenvmcap218279.onmicrosoft.com`. The OIDC lane excludes them from publication and
+deletion. Publish only those two from an Azure CLI session authenticated as that administrator:
 
 ```powershell
 .venv\Scripts\python.exe scripts\deploy_to_fabric.py `
@@ -72,7 +71,7 @@ session authenticated as that administrator:
 ```
 
 The command verifies both the user's Entra UPN and object ID before publishing. It publishes only
-NB04 and `PL_SemanticModel_Rebind_Refresh`; it is not an exclusion from subsequent CI/CD updates.
+NB04 and `PL_SemanticModel_Rebind_Refresh`.
 
 The source references have separate meanings:
 
@@ -88,9 +87,9 @@ untracked `parameter.yml`.
 
 The [production workflow](.github/workflows/deploy-production.yml) runs on pushes to `main` and can
 also be dispatched manually. Push runs publish the Git delta plus missing or environment-drifted
-items and apply Git deletions. Manual runs perform a full reconciliation by dynamically discovering
-and publishing every repository item, which repairs older missed changes without hardcoded item
-lists. Configure a GitHub `production` Environment with:
+OIDC items and apply their Git deletions. Manual runs fully reconcile all dynamically discovered
+OIDC-owned items. They never publish NB04 or `PL_SemanticModel_Rebind_Refresh` as the service
+principal. Configure a GitHub `production` Environment with:
 
 | Variable | Purpose |
 | --- | --- |
@@ -116,9 +115,10 @@ Notebook connection.
 7. Run `PL_Refresh_Master` in Production and verify all three activities.
 8. Run `PL_SemanticModel_Rebind_Refresh` and verify it completes.
 
-Use `--full-deploy` for a complete reconciliation or recovery. It dynamically discovers and
-publishes all repository items. Use `--admin-owned-only` only to create or repair the ownership of
-NB04 and its pipeline under the designated administrator.
+Use `--full-deploy` for complete reconciliation of OIDC-owned items. Use `--admin-owned-only` for
+NB04 and its pipeline under the designated administrator. A fully automated GitHub deployment of
+both lanes requires a self-hosted runner authenticated as that administrator; GitHub OIDC cannot
+issue a delegated token for an Entra user.
 
 ## Fresh workspace validation
 

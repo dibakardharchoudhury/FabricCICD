@@ -227,18 +227,20 @@ def main() -> None:
                 f"{deploy_path.relative_to(ROOT)}: missing administrator ownership declaration "
                 f"{administrator_owned_item}"
             )
-    for forbidden_exclusion in (
-        "DEPLOYMENT_EXCLUDED_ITEMS",
-        "Skipping deployment-excluded deletion",
+    for ownership_guard in (
+        "OIDC_EXCLUDED_ITEMS = ADMIN_OWNED_ITEMS",
+        "Skipping administrator-owned deletion in OIDC mode",
+        "Skipping OIDC-owned deletion in administrator mode",
+        "not in OIDC_EXCLUDED_ITEMS",
     ):
-        if forbidden_exclusion in deploy_source:
+        if ownership_guard not in deploy_source:
             failures.append(
-                f"{deploy_path.relative_to(ROOT)}: tracked Fabric items must not be deployment-excluded: "
-                f"{forbidden_exclusion}"
+                f"{deploy_path.relative_to(ROOT)}: missing administrator ownership guard: "
+                f"{ownership_guard}"
             )
     if "publish_all_items(workspace, items_to_include=reconciliation_items)" not in deploy_source:
         failures.append(
-            f"{deploy_path.relative_to(ROOT)}: full reconciliation must publish discovered items"
+            f"{deploy_path.relative_to(ROOT)}: full reconciliation must publish discovered OIDC items"
         )
 
     production_workflow_path = ROOT / ".github" / "workflows" / "deploy-production.yml"

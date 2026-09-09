@@ -46,6 +46,7 @@ ADMIN_OWNED_ITEMS = {
     ("Notebook", "NB_04_SemanticModelReBindRefresh"),
     ("DataPipeline", "PL_SemanticModel_Rebind_Refresh"),
 }
+OIDC_EXCLUDED_ITEMS = ADMIN_OWNED_ITEMS
 ADMIN_UPN = "admin@mngenvmcap218279.onmicrosoft.com"
 ADMIN_OBJECT_ID = "7ab1a6b2-d2e6-41b8-92ba-1fb3a8ba5bc0"
 
@@ -227,6 +228,7 @@ def delete_removed_items(
     git_compare_ref: str,
     target_workspace_id: str,
     api: FabricApi,
+    admin_owned_only: bool,
 ) -> None:
     deleted_items = discover_deleted_items(repository_directory, git_compare_ref)
     if not deleted_items:
@@ -238,6 +240,13 @@ def delete_removed_items(
         (item["type"], item["displayName"]): item["id"] for item in target_items
     }
     for item_type, display_name in deleted_items:
+        is_admin_owned = (item_type, display_name) in ADMIN_OWNED_ITEMS
+        if admin_owned_only and not is_admin_owned:
+            print(f"Skipping OIDC-owned deletion in administrator mode: {display_name}.{item_type}")
+            continue
+        if not admin_owned_only and is_admin_owned:
+            print(f"Skipping administrator-owned deletion in OIDC mode: {display_name}.{item_type}")
+            continue
         item_id = target_by_type_name.get((item_type, display_name))
         if item_id is None:
             print(f"Git-removed item already absent: {display_name}.{item_type}")
@@ -337,7 +346,11 @@ def select_items_to_publish(
             selected.add(f"{display_name}.{item_type}")
             print(f"Selected {display_name}.{item_type}: its connection still points to Dev")
 
-    return sorted(selected)
+    return sorted(
+        item
+        for item in selected
+        if tuple(reversed(item.rsplit(".", 1))) not in OIDC_EXCLUDED_ITEMS
+    )
 
 
 def verify_admin_identity(credential: Any) -> None:
@@ -373,6 +386,10 @@ def main() -> None:
         verify_admin_identity(credential)
         repository_items = [
             item for item in repository_items if (item[0], item[1]) in ADMIN_OWNED_ITEMS
+        ]
+    else:
+        repository_items = [
+            item for item in repository_items if (item[0], item[1]) not in OIDC_EXCLUDED_ITEMS
         ]
     remove_generated_item_artifacts(repository_items)
     item_types = sorted(
@@ -411,7 +428,7 @@ def main() -> None:
             f"{name}.{item_type}" for item_type, name, _path in repository_items
         )
         print(
-            "Full reconciliation requested; publishing all dynamically discovered items: "
+            "Full reconciliation requested; publishing all dynamically discovered OIDC-owned items: "
             + ", ".join(reconciliation_items)
         )
         publish_all_items(workspace, items_to_include=reconciliation_items)
@@ -436,6 +453,7 @@ def main() -> None:
         args.git_compare_ref,
         target_workspace_id,
         api,
+        args.admin_owned_only,
     )
     if args.remove_orphans:
         unpublish_all_orphan_items(workspace)
