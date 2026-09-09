@@ -18,9 +18,11 @@ Bronze_LH ─ NB_01_Seed_Bronze        (inline sample data)
 
 `PL_Refresh_Master` runs the chain in order; `NB_03` refreshes `Gold_SM` right after writing the
 Gold tables (no separate model-refresh activity). Each Notebook activity runs with the authentication
-method selected under **Settings → Connection**; item ownership does not set its runtime identity.
-The GitHub OIDC `fabric-rest` identity deploys item definitions but is not automatically a Notebook
-connection. The Dataflow uses its separately configured connection credential.
+method selected under **Settings → Connection**. Without an explicit activity connection, a pipeline
+deployed and owned by the GitHub OIDC `fabric-rest` identity can execute under that SPN context even
+when a user selects **Run**. Dataflow Gen2 rejects that pipeline invocation with
+`SPNBasedRefreshNotAllowed`, although a direct user refresh succeeds. The Dataflow's separately saved
+connection credential does not change the identity that invokes its refresh.
 
 ## Repo layout
 
@@ -395,7 +397,9 @@ deployment script authenticates to Fabric through OIDC. `NB_04` remains availabl
 in-Fabric deployment.
 
 Notebook runtime identity is configured on each activity under **Settings → Connection**; changing
-pipeline metadata is not an identity configuration. Microsoft documents
+pipeline metadata alone is not an identity configuration. If no activity connection is stored, the
+pipeline can fall back to its owner/effective execution identity for both on-demand and scheduled runs.
+Microsoft documents
 [Notebook activities with service-principal or workspace-identity connections](https://learn.microsoft.com/fabric/data-factory/notebook-activity).
 An SPN connection requires a tenant ID, client ID, and service-principal key stored in Fabric. The
 current `fabric-rest` app is GitHub OIDC-only and has no key, so that connection cannot be created
