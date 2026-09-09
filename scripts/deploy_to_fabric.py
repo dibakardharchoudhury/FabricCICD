@@ -208,6 +208,19 @@ def delete_excluded_items(target_workspace_id: str, api: FabricApi) -> None:
         )
 
 
+def delete_excluded_folders(
+    target_workspace_id: str,
+    excluded_directories: set[str],
+    api: FabricApi,
+) -> None:
+    target_folders = api.get(f"/workspaces/{target_workspace_id}/folders").get("value", [])
+    for folder in target_folders:
+        if folder["displayName"] not in excluded_directories or folder.get("parentFolderId"):
+            continue
+        api.delete(f"/workspaces/{target_workspace_id}/folders/{folder['id']}")
+        print(f"Deleted excluded folder: {folder['displayName']} ({folder['id']})")
+
+
 def generate_parameters(
     repository_directory: Path,
     repository_items: list[tuple[str, str, Path]],
@@ -380,6 +393,7 @@ def main() -> None:
     )
     if args.delete_excluded_items:
         delete_excluded_items(target_workspace_id, api)
+        delete_excluded_folders(target_workspace_id, excluded_directories, api)
     if args.remove_orphans:
         unpublish_all_orphan_items(workspace)
     print(f"Deployment to {args.target_workspace} completed")
