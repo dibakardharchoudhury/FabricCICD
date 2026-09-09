@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
+import time
 from typing import Any
 
 
 FABRIC_API = "https://api.fabric.microsoft.com/v1"
 FABRIC_SCOPE = "https://api.fabric.microsoft.com/.default"
-EXCLUDED_ITEM_NAMES = {"NB_04_Deploy", "NB_04_Deploy_NOTSECURE"}
+NOTEBOOK_CONNECTION_NAME = "FabricCICD Notebook Workspace Identity"
+CONNECTION_ID_PLACEHOLDER = "11111111-1111-1111-1111-111111111111"
 SUPPORTED_ITEM_TYPES = {
     "ApacheAirflowJob",
     "CopyJob",
@@ -48,8 +52,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--environment", default="Production")
     parser.add_argument("--repository-directory", default=".")
     parser.add_argument("--git-compare-ref", default="HEAD~1")
-    parser.add_argument("--exclude-directory", action="append", default=[])
-    parser.add_argument("--delete-excluded-items", action="store_true")
     parser.add_argument("--full-deploy", action="store_true")
     parser.add_argument("--remove-orphans", action="store_true")
     parser.add_argument("--recreate-analytics-items", action="store_true")
@@ -83,6 +85,44 @@ class FabricApi:
         response.raise_for_status()
         return response.json()
 
+    def post(self, path: str, body: dict | None = None) -> dict:
+        import requests
+
+        token = self.credential.get_token(FABRIC_SCOPE).token
+        response = requests.post(
+            f"{FABRIC_API}{path}",
+            headers={"Authorization": f"Bearer {token}"},
+            json=body,
+            timeout=60,
+        )
+        response.raise_for_status()
+        if response.status_code == 202:
+            operation_url = response.headers.get("Location")
+            if not operation_url:
+                raise ValueError(f"Fabric accepted POST {path} without an operation URL")
+            return self.wait_for_operation(operation_url)
+        return response.json() if response.content else {}
+
+    def wait_for_operation(self, operation_url: str) -> dict:
+        import requests
+
+        for _attempt in range(60):
+            token = self.credential.get_token(FABRIC_SCOPE).token
+            response = requests.get(
+                operation_url,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=60,
+            )
+            response.raise_for_status()
+            operation = response.json()
+            status = operation.get("status")
+            if status == "Succeeded":
+                return operation
+            if status in {"Failed", "Cancelled"}:
+                raise RuntimeError(f"Fabric operation {status}: {operation.get('error')}")
+            time.sleep(2)
+        raise TimeoutError(f"Fabric operation did not complete: {operation_url}")
+
     def delete(self, path: str) -> bool:
         import requests
 
@@ -115,12 +155,103 @@ class FabricApi:
             raise ValueError(f"{item_type} '{display_name}' was not found in workspace {workspace_id}")
         return match
 
+    def ensure_workspace_identity(self, workspace_id: str) -> None:
+        import requests
 
-def discover_items(
-    repository_directory: Path,
-    excluded_directories: set[str] | None = None,
-) -> list[tuple[str, str, Path]]:
-    excluded_directories = excluded_directories or set()
+        for attempt in range(1, 5):
+            try:
+                self.post(f"/workspaces/{workspace_id}/provisionIdentity")
+                break
+            except requests.HTTPError as error:
+                response_body = error.response.json() if error.response.content else {}
+                if response_body.get("errorCode") == "WorkspaceIdentityAlreadyExists":
+                    break
+                if error.response.status_code not in {429, 500, 502, 503, 504} or attempt == 4:
+                    raise
+                time.sleep(2 ** (attempt - 1))
+        print(f"Workspace identity is provisioned for {workspace_id}")
+
+    def ensure_workspace_identity_role(self, workspace_id: str) -> None:
+        workspace = self.get(f"/workspaces/{workspace_id}")
+        identity = workspace.get("workspaceIdentity", {})
+        principal_id = identity.get("servicePrincipalId")
+        if not principal_id:
+            raise ValueError(f"Workspace {workspace_id} has no provisioned identity principal")
+
+        assignments = self.get(f"/workspaces/{workspace_id}/roleAssignments").get("value", [])
+        assignment = next(
+            (
+                item
+                for item in assignments
+                if item.get("principal", {}).get("id") == principal_id
+            ),
+            None,
+        )
+        if assignment:
+            print(
+                f"Workspace identity already has {assignment['role']} access to {workspace_id}"
+            )
+            return
+
+        self.post(
+            f"/workspaces/{workspace_id}/roleAssignments",
+            {
+                "principal": {"id": principal_id, "type": "ServicePrincipal"},
+                "role": "Contributor",
+            },
+        )
+        print(f"Granted Workspace Identity Contributor access to {workspace_id}")
+
+    def ensure_notebook_workspace_identity_connection(self, workspace_id: str) -> str:
+        connections = self.get("/connections").get("value", [])
+        named = [
+            connection
+            for connection in connections
+            if connection.get("displayName") == NOTEBOOK_CONNECTION_NAME
+        ]
+        for connection in named:
+            if (
+                connection.get("connectionDetails", {}).get("type") == "Notebook"
+                and connection.get("credentialDetails", {}).get("credentialType")
+                == "WorkspaceIdentity"
+            ):
+                print(
+                    f"Reusing Notebook Workspace Identity connection: "
+                    f"{NOTEBOOK_CONNECTION_NAME} ({connection['id']})"
+                )
+                return connection["id"]
+        if named:
+            raise ValueError(
+                f"Connection '{NOTEBOOK_CONNECTION_NAME}' exists with incompatible type or credentials"
+            )
+
+        connection = self.post(
+            "/connections",
+            {
+                "connectivityType": "ShareableCloud",
+                "displayName": NOTEBOOK_CONNECTION_NAME,
+                "connectionDetails": {
+                    "type": "Notebook",
+                    "creationMethod": "Notebook.Actions",
+                    "parameters": [],
+                },
+                "privacyLevel": "Organizational",
+                "credentialDetails": {
+                    "singleSignOnType": "None",
+                    "connectionEncryption": "NotEncrypted",
+                    "skipTestConnection": False,
+                    "credentials": {"credentialType": "WorkspaceIdentity"},
+                },
+            },
+        )
+        connection_id = connection.get("id")
+        if not connection_id:
+            raise ValueError("Fabric created the Power BI connection without returning its ID")
+        print(f"Created Notebook Workspace Identity connection: {connection_id}")
+        return connection_id
+
+
+def discover_items(repository_directory: Path) -> list[tuple[str, str, Path]]:
     items: list[tuple[str, str, Path]] = []
     for root, directories, _files in os.walk(repository_directory):
         directories[:] = [
@@ -128,7 +259,6 @@ def discover_items(
             for name in directories
             if name != ".git"
             and not name.startswith(".")
-            and name not in excluded_directories
         ]
         item_directories: list[str] = []
         for directory in directories:
@@ -137,12 +267,22 @@ def discover_items(
                 separator
                 and item_type in SUPPORTED_ITEM_TYPES
                 and (Path(root) / directory / ".platform").is_file()
-                and display_name not in EXCLUDED_ITEM_NAMES
             ):
                 items.append((item_type, display_name, Path(root, directory)))
                 item_directories.append(directory)
         directories[:] = [name for name in directories if name not in item_directories]
     return items
+
+
+def remove_generated_item_artifacts(
+    repository_items: list[tuple[str, str, Path]],
+) -> None:
+    for _item_type, _display_name, item_path in repository_items:
+        for cache_directory in item_path.rglob("__pycache__"):
+            shutil.rmtree(cache_directory)
+        for pattern in ("*.pyc", "*.pyo"):
+            for artifact in item_path.rglob(pattern):
+                artifact.unlink()
 
 
 def discover_deleted_items(repository_directory: Path, git_compare_ref: str) -> list[tuple[str, str]]:
@@ -168,8 +308,7 @@ def discover_deleted_items(repository_directory: Path, git_compare_ref: str) -> 
         for part in Path(changed_path).parts:
             display_name, separator, item_type = part.rpartition(".")
             if separator and item_type in SUPPORTED_ITEM_TYPES:
-                if display_name not in EXCLUDED_ITEM_NAMES:
-                    deleted_items.add((item_type, display_name))
+                deleted_items.add((item_type, display_name))
                 break
     return sorted(deleted_items)
 
@@ -198,30 +337,6 @@ def delete_removed_items(
         print(f"Deleted Git-removed item: {display_name}.{item_type} ({item_id})")
 
 
-def delete_excluded_items(target_workspace_id: str, api: FabricApi) -> None:
-    target_items = api.get(f"/workspaces/{target_workspace_id}/items").get("value", [])
-    for item in target_items:
-        if item["displayName"] not in EXCLUDED_ITEM_NAMES:
-            continue
-        api.delete(f"/workspaces/{target_workspace_id}/items/{item['id']}")
-        print(
-            f"Deleted excluded item: {item['displayName']}.{item['type']} ({item['id']})"
-        )
-
-
-def delete_excluded_folders(
-    target_workspace_id: str,
-    excluded_directories: set[str],
-    api: FabricApi,
-) -> None:
-    target_folders = api.get(f"/workspaces/{target_workspace_id}/folders").get("value", [])
-    for folder in target_folders:
-        if folder["displayName"] not in excluded_directories or folder.get("parentFolderId"):
-            continue
-        api.delete(f"/workspaces/{target_workspace_id}/folders/{folder['id']}")
-        print(f"Deleted excluded folder: {folder['displayName']} ({folder['id']})")
-
-
 def recreate_analytics_items(target_workspace_id: str, api: FabricApi) -> None:
     target_items = api.get(f"/workspaces/{target_workspace_id}/items").get("value", [])
     target_by_type_name = {
@@ -245,6 +360,7 @@ def generate_parameters(
     dev_workspace_id: str,
     environment: str,
     api: FabricApi,
+    notebook_connection_id: str,
 ) -> None:
     import yaml
 
@@ -258,22 +374,28 @@ def generate_parameters(
         return {name: value for name in environments}
 
     rules: list[dict] = []
-    publish_types = sorted({item_type for item_type in items_by_type if item_type != "VariableLibrary"})
     workspace_rule = {
         "find_value": dev_workspace_id,
         "replace_value": replacement("$workspace.$id"),
     }
     rules.append(workspace_rule)
+    rules.append(
+        {
+            "find_value": CONNECTION_ID_PLACEHOLDER,
+            "replace_value": replacement(notebook_connection_id),
+            "item_type": ["DataPipeline"],
+        }
+    )
 
-    for item_type in ("Notebook", "Dataflow", "SemanticModel"):
-        for display_name in sorted(items_by_type.get(item_type, [])):
-            try:
-                dev_item_id = api.resolve_item_id(dev_workspace_id, display_name, item_type)
-            except ValueError:
-                continue
+    for item_type, display_name, item_path in repository_items:
+        if item_type in {"Notebook", "Dataflow", "SemanticModel"}:
+            platform = json.loads((item_path / ".platform").read_text(encoding="utf-8-sig"))
+            logical_id = platform.get("config", {}).get("logicalId")
+            if not logical_id:
+                raise ValueError(f"{item_path}: missing config.logicalId")
             rules.append(
                 {
-                    "find_value": dev_item_id,
+                    "find_value": logical_id,
                     "replace_value": replacement(f"$items.{item_type}.{display_name}.$id"),
                     "item_type": ["DataPipeline"],
                 }
@@ -332,11 +454,7 @@ def select_items_to_publish(
             selected.add(f"{display_name}.{item_type}")
             print(f"Selected {display_name}.{item_type}: its connection still points to Dev")
 
-    return sorted(
-        item
-        for item in selected
-        if item.rsplit(".", 1)[0] not in EXCLUDED_ITEM_NAMES
-    )
+    return sorted(selected)
 
 
 def main() -> None:
@@ -356,20 +474,28 @@ def main() -> None:
     target_workspace_id = api.resolve_workspace_id(args.target_workspace)
     print(f"Dev workspace: {args.dev_workspace} ({dev_workspace_id})")
     print(f"Target workspace: {args.target_workspace} ({target_workspace_id})")
-    excluded_directories = set(args.exclude_directory)
-    repository_items = discover_items(repository_directory, excluded_directories)
+    api.ensure_workspace_identity(target_workspace_id)
+    api.ensure_workspace_identity_role(target_workspace_id)
+    notebook_connection_id = api.ensure_notebook_workspace_identity_connection(
+        target_workspace_id
+    )
+    repository_items = discover_items(repository_directory)
+    remove_generated_item_artifacts(repository_items)
     item_types = sorted(
         {item_type for item_type, _name, _path in repository_items if item_type != "VariableLibrary"}
     )
     if not item_types:
         raise ValueError(f"No supported Fabric item folders were found under {repository_directory}")
 
+    parameter_file = repository_directory / "parameter.yml"
+    atexit.register(parameter_file.unlink, missing_ok=True)
     generate_parameters(
         repository_directory,
         repository_items,
         dev_workspace_id,
         args.environment,
         api,
+        notebook_connection_id,
     )
     workspace = FabricWorkspace(
         workspace_id=target_workspace_id,
@@ -379,16 +505,11 @@ def main() -> None:
         token_credential=credential,
     )
     print(f"Comparing {len(repository_items)} source items with {args.target_workspace}")
-    print("Excluded item names: " + ", ".join(sorted(EXCLUDED_ITEM_NAMES)))
-    print("Excluded directories: " + (", ".join(sorted(excluded_directories)) or "(none)"))
     if args.full_deploy:
         if args.recreate_analytics_items:
             raise ValueError("--recreate-analytics-items cannot be combined with --full-deploy")
         print("Full deployment requested")
-        publish_all_items(
-            workspace,
-            item_name_exclude_regex=r"^NB_04_Deploy(?:_NOTSECURE)?$",
-        )
+        publish_all_items(workspace)
     else:
         if args.recreate_analytics_items:
             recreate_analytics_items(target_workspace_id, api)
@@ -415,9 +536,6 @@ def main() -> None:
         target_workspace_id,
         api,
     )
-    if args.delete_excluded_items:
-        delete_excluded_items(target_workspace_id, api)
-        delete_excluded_folders(target_workspace_id, excluded_directories, api)
     if args.remove_orphans:
         unpublish_all_orphan_items(workspace)
     print(f"Deployment to {args.target_workspace} completed")

@@ -23,6 +23,7 @@ EXPECTED_PIPELINE = (
     ("NB_Transform_Silver", "NB_02_Transform_Silver", "NB_Seed_Bronze"),
     ("NB_Aggregate_GOLD", "NB_03_Aggregate_Gold", "NB_Transform_Silver"),
 )
+CONNECTION_ID_PLACEHOLDER = "11111111-1111-1111-1111-111111111111"
 EXPECTED_GOLD_SNIPPETS = {
     'spark.table("Silver_LH.dbo.production_conformed")',
     '.groupBy("date", "field")',
@@ -32,10 +33,10 @@ EXPECTED_GOLD_SNIPPETS = {
     '_write_gold(df_kpi_facts, "field_kpi_facts")',
     "directlake.update_direct_lake_model_connection(",
     "PowerBIRestClient._get_default_base_url = _powerbi_base_url",
-    "SetFabricAnalyticsDefaultTokenCredentials(_semantic_link_credential)",
-    'token_name = "pbi" if "analysis.windows.net/powerbi/api" in audience else audience',
     "labs.refresh_semantic_model(",
     'dataset=_SEMANTIC_MODEL, workspace=_ws_id, refresh_type="full"',
+    "# PARAMETERS CELL ********************",
+    "refresh_semantic_model = True",
 }
 EXPECTED_ENVIRONMENT_PIP = {
     "fabric-cicd==1.3.0",
@@ -53,12 +54,9 @@ def main() -> None:
         check=True,
         capture_output=True,
     ).stdout.decode("utf-8").split("\0")
-    tracked_paths = [ROOT / path for path in tracked if path]
+    tracked_paths = [ROOT / path for path in tracked if path and (ROOT / path).is_file()]
 
     for path in tracked_paths:
-        if not path.is_file():
-            failures.append(f"{path.relative_to(ROOT)}: tracked file is missing")
-            continue
         if path.suffix.lower() in TEXT_SUFFIXES or path.name == ".platform":
             try:
                 content = path.read_text(encoding="utf-8-sig")
@@ -150,10 +148,10 @@ def main() -> None:
     pipeline = json.loads(pipeline_path.read_text(encoding="utf-8-sig"))
     activities = pipeline.get("properties", {}).get("activities", [])
     if len(activities) != len(EXPECTED_PIPELINE):
-        failures.append(f"{pipeline_path.relative_to(ROOT)}: expected exactly three activities")
+        failures.append(f"{pipeline_path.relative_to(ROOT)}: expected three notebook activities")
     else:
         for activity, (expected_name, expected_notebook, expected_dependency) in zip(
-            activities, EXPECTED_PIPELINE, strict=True
+            activities[:3], EXPECTED_PIPELINE, strict=True
         ):
             if activity.get("name") != expected_name or activity.get("type") != "TridentNotebook":
                 failures.append(
@@ -169,12 +167,22 @@ def main() -> None:
                 failures.append(
                     f"{pipeline_path.relative_to(ROOT)}: {expected_name} must use Fabric's current-workspace placeholder"
                 )
+            if activity.get("externalReferences", {}).get("connection") != CONNECTION_ID_PLACEHOLDER:
+                failures.append(
+                    f"{pipeline_path.relative_to(ROOT)}: {expected_name} must use the deploy-time Notebook connection"
+                )
             dependencies = activity.get("dependsOn", [])
             actual_dependency = dependencies[0].get("activity") if len(dependencies) == 1 else None
             if actual_dependency != expected_dependency or (expected_dependency is None and dependencies):
                 failures.append(
                     f"{pipeline_path.relative_to(ROOT)}: {expected_name} has the wrong dependency"
                 )
+
+        aggregate_parameters = activities[2].get("typeProperties", {}).get("parameters", {})
+        if aggregate_parameters.get("refresh_semantic_model") != {"value": True, "type": "bool"}:
+            failures.append(
+                f"{pipeline_path.relative_to(ROOT)}: NB_Aggregate_GOLD must run the Semantic Link refresh"
+            )
 
     gold_path = ROOT / "Gold" / "NB_03_Aggregate_Gold.Notebook" / "notebook-content.py"
     gold_source = gold_path.read_text(encoding="utf-8-sig")

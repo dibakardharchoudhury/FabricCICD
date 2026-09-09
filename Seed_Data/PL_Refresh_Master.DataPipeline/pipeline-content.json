@@ -7,6 +7,9 @@
           "notebookId": "a245d1fc-137d-9673-490a-1ac4552bff57",
           "workspaceId": "00000000-0000-0000-0000-000000000000"
         },
+        "externalReferences": {
+          "connection": "11111111-1111-1111-1111-111111111111"
+        },
         "policy": {
           "timeout": "0.12:00:00",
           "retry": 0,
@@ -22,6 +25,9 @@
         "typeProperties": {
           "notebookId": "d6960abd-fcf2-a3cb-4c27-d488c1aef372",
           "workspaceId": "00000000-0000-0000-0000-000000000000"
+        },
+        "externalReferences": {
+          "connection": "11111111-1111-1111-1111-111111111111"
         },
         "policy": {
           "timeout": "0.12:00:00",
@@ -44,7 +50,16 @@
         "type": "TridentNotebook",
         "typeProperties": {
           "notebookId": "e5d96394-6c5c-9711-462d-75a288f2e3ad",
-          "workspaceId": "00000000-0000-0000-0000-000000000000"
+          "workspaceId": "00000000-0000-0000-0000-000000000000",
+          "parameters": {
+            "refresh_semantic_model": {
+              "value": true,
+              "type": "bool"
+            }
+          }
+        },
+        "externalReferences": {
+          "connection": "11111111-1111-1111-1111-111111111111"
         },
         "policy": {
           "timeout": "0.12:00:00",

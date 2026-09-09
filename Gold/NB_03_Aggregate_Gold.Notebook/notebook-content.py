@@ -27,6 +27,17 @@
 # META   }
 # META }
 
+# PARAMETERS CELL ********************
+
+refresh_semantic_model = True
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
 # CELL ********************
 
 # Aggregates Silver data into report-ready Gold tables.
@@ -173,11 +184,6 @@ PowerBIRestClient._get_default_base_url = _powerbi_base_url
 
 import sempy_labs as labs
 from sempy_labs import directlake
-from azure.core.credentials import AccessToken
-from fabric.analytics.environment.credentials import SetFabricAnalyticsDefaultTokenCredentials
-import base64
-import hashlib
-import json
 import notebookutils
 import time
 
@@ -193,69 +199,33 @@ for _tbl in _EXPECTED_TABLES:
     print(f"  Gold_LH.{_tbl}: {spark.table(f'Gold_LH.dbo.{_tbl}').count()} rows")
 
 _SEMANTIC_MODEL = "Gold_SM"
-_MAX_ATTEMPTS   = 15         # total tries
-_BACKOFF_SECS   = 120        # wait between tries (create-from-scratch sync can run ~10 min+)
-
-def _token_claims(token):
-    payload = token.split(".")[1]
-    payload += "=" * (-len(payload) % 4)
-    return json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
-
-class _NotebookUtilsCredential:
-    def __init__(self):
-        self._logged_scopes = set()
-
-    def get_token(self, *scopes, **kwargs):
-        scope = scopes[0] if scopes else "https://analysis.windows.net/powerbi/api/.default"
-        audience = scope.removesuffix("/.default")
-        token_name = "pbi" if "analysis.windows.net/powerbi/api" in audience else audience
-        token = notebookutils.credentials.getToken(token_name)
-        if scope not in self._logged_scopes:
-            claims = _token_claims(token)
-            fingerprint = hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
-            print(
-                "Explicit Semantic Link credential: "
-                f"scope={scope}, aud={claims.get('aud', '(not set)')}, "
-                f"oid={claims.get('oid', '(not set)')}, "
-                f"appid={claims.get('appid', claims.get('azp', '(not set)'))}, "
-                f"token_sha256={fingerprint}"
-            )
-            self._logged_scopes.add(scope)
-        return AccessToken(token, int(_token_claims(token).get("exp", time.time() + 3600)))
-
-_semantic_link_credential = _NotebookUtilsCredential()
+_MAX_ATTEMPTS   = 15
+_BACKOFF_SECS   = 120
 
 # Rebind defensively before refreshing.
 _GOLD_LAKEHOUSE = "Gold_LH"
 _gold_lh_meta = notebookutils.lakehouse.get(_GOLD_LAKEHOUSE, _ws_id)
 _gold_lh_id   = _gold_lh_meta["id"] if isinstance(_gold_lh_meta, dict) else _gold_lh_meta.id
-with SetFabricAnalyticsDefaultTokenCredentials(_semantic_link_credential):
-    directlake.update_direct_lake_model_connection(
-        dataset=_SEMANTIC_MODEL, workspace=_ws_id,
-        source=_gold_lh_id, source_type="Lakehouse",
-        source_workspace=_ws_id, use_sql_endpoint=False,
-    )
+directlake.update_direct_lake_model_connection(
+    dataset=_SEMANTIC_MODEL, workspace=_ws_id,
+    source=_gold_lh_id, source_type="Lakehouse",
+    source_workspace=_ws_id, use_sql_endpoint=False,
+)
 print(f"🔗 '{_SEMANTIC_MODEL}' Direct Lake connection re-pointed to '{_GOLD_LAKEHOUSE}' "
       f"({_gold_lh_id}) in this workspace before refresh.")
 
-print(f"\n── Refreshing Direct Lake (on OneLake) model '{_SEMANTIC_MODEL}' (full reframe) ──")
-print(f"Semantic Link Power BI endpoint: {PowerBIRestClient().default_base_url}")
-_pbi_token = notebookutils.credentials.getToken("pbi")
-_pbi_claims = _token_claims(_pbi_token)
-print(
-    "Semantic Link caller: "
-    f"idtyp={_pbi_claims.get('idtyp', '(not set)')}, "
-    f"oid={_pbi_claims.get('oid', '(not set)')}, "
-    f"appid={_pbi_claims.get('appid', _pbi_claims.get('azp', '(not set)'))}, "
-    f"aud={_pbi_claims.get('aud', '(not set)')}"
-)
-_refreshed = False
-for _attempt in range(1, _MAX_ATTEMPTS + 1):
+if refresh_semantic_model:
+    print(f"\n── Refreshing Direct Lake (on OneLake) model '{_SEMANTIC_MODEL}' (full reframe) ──")
+    print(f"Semantic Link Power BI endpoint: {PowerBIRestClient().default_base_url}")
+else:
+    print(f"⏭️ '{_SEMANTIC_MODEL}' refresh skipped by the caller.")
+
+_refreshed = not refresh_semantic_model
+for _attempt in range(1, _MAX_ATTEMPTS + 1) if refresh_semantic_model else ():
     try:
-        with SetFabricAnalyticsDefaultTokenCredentials(_semantic_link_credential):
-            labs.refresh_semantic_model(
-                dataset=_SEMANTIC_MODEL, workspace=_ws_id, refresh_type="full",
-            )
+        labs.refresh_semantic_model(
+            dataset=_SEMANTIC_MODEL, workspace=_ws_id, refresh_type="full",
+        )
         print(f"✅ '{_SEMANTIC_MODEL}' refreshed on attempt {_attempt}/{_MAX_ATTEMPTS} "
               f"(Direct Lake reframe complete) — report is up to date.")
         _refreshed = True
@@ -274,14 +244,8 @@ for _attempt in range(1, _MAX_ATTEMPTS + 1):
             continue
 
         _failure_guidance = (
-            "  • The Power BI API returned 403 for the correct api.powerbi.com endpoint. The pipeline's\n"
-            "    token reached Power BI, but the empty response does not identify the rejected authorization\n"
-            "    condition. The model's configuredBy owner and full item rights must be checked separately.\n"
-            "    For an SPN-triggered notebook, labs.refresh_semantic_model delegates to sempy's\n"
-            "    refresh_dataset operation, which is not in Microsoft's supported-function list for the\n"
-            "    default Semantic Link token service. Use an explicitly authenticated supported SPN flow or\n"
-            "    confirm expanded default-token support before treating this as a workspace-role failure.\n"
-            "    Retrying the same request will not resolve this 403."
+            "  • The Power BI API returned a non-retryable 403. Semantic-model refresh is not in\n"
+            "    the supported Semantic Link function subset for service-principal-triggered runs."
             if _forbidden else
             "  • 0xC14700DF / 'do not exist or access' can indicate create-from-scratch metadata sync.\n"
             "    Extend _MAX_ATTEMPTS or _BACKOFF_SECS if the first-run sync exceeds this retry window."
@@ -292,7 +256,12 @@ for _attempt in range(1, _MAX_ATTEMPTS + 1):
             f"{_failure_guidance}"
         ) from _e
 
-print("🏆 Gold aggregation COMPLETE — tables written, Gold_SM refreshed")
+_completion = (
+    "tables written and Gold_SM refreshed"
+    if _refreshed and refresh_semantic_model
+    else "tables written and Gold_SM rebound"
+)
+print(f"🏆 Gold aggregation COMPLETE — {_completion}")
 
 # METADATA ********************
 

@@ -1,423 +1,157 @@
-# Microsoft Fabric CI/CD — Medallion Demo
+# Microsoft Fabric CI/CD - Medallion Demo
 
-A Bronze → Silver → Gold lakehouse promoted between Fabric workspaces **entirely from code**
-with [fabric-cicd](https://microsoft.github.io/fabric-cicd/). One notebook — `NB_04_Deploy` —
-publishes the production item definitions into a target workspace and rebinds all cross-workspace
-references. The `Deploy/` subtree itself stays in Dev.
-No Fabric Deployment Pipeline or Dataflow credential setup is required.
+This repository promotes a Bronze -> Silver -> Gold Microsoft Fabric solution with
+[`fabric-cicd`](https://microsoft.github.io/fabric-cicd/). Production deployment has one supported
+path: GitHub Actions authenticates through OIDC and runs `scripts/deploy_to_fabric.py`. There is no
+deployment notebook, GitHub PAT, client secret, interactive OAuth connection, or checked-in
+environment parameter file.
 
-## Pipeline
+## Data flow
 
 ```text
-Bronze_LH ─ NB_01_Seed_Bronze        (inline sample data)
-   └► Silver_LH ─ NB_02_Transform_Silver
-   └► Gold_LH ─ NB_03_Aggregate_Gold
-              └► Gold_SM (Direct Lake) ─► Gold_Dashboard
+Bronze_LH <- NB_01_Seed_Bronze
+    |
+Silver_LH <- NB_02_Transform_Silver
+    |
+Gold_LH   <- NB_03_Aggregate_Gold
+    |
+Gold_SM (Direct Lake) -> Gold_Dashboard
 ```
 
-`PL_Refresh_Master` runs the three notebooks in order; `NB_03` creates all Gold tables and refreshes
-`Gold_SM` (no separate model-refresh activity). GitHub Actions publishes notebooks and the pipeline
-through the OIDC `fabric-rest` service principal. Each Notebook activity runs with the authentication
-method selected under **Settings → Connection**.
+`PL_Refresh_Master` runs three notebook activities in order:
 
-## Repo layout
+1. `NB_01_Seed_Bronze`
+2. `NB_02_Transform_Silver`
+3. `NB_03_Aggregate_Gold`
 
-| Path | What it is |
+NB03 writes the Gold tables and rebinds `Gold_SM` to the current workspace's `Gold_LH`. Pipeline
+runs pass `refresh_semantic_model=True`, so NB03 retains the Semantic Link
+`labs.refresh_semantic_model(...)` path. The notebooks run through a dynamically injected
+`Notebook.Actions` Workspace Identity connection.
+
+## Repository layout
+
+| Path | Purpose |
 | --- | --- |
-| `Bronze/` | `Bronze_LH` and `NB_01_Seed_Bronze` |
-| `Silver/` | `Silver_LH` and `NB_02_Transform_Silver` |
-| `Gold/` | `Gold_LH`, `NB_03`, pipeline, model, and report |
-| `Deploy/NB_04_Deploy.Notebook/` | **Dev-only deploy tool** — excluded from target stages |
-| `semanticlink.Environment/` | Spark env (`fabric-cicd`, `semantic-link-labs`) |
+| `Bronze/` | Bronze Lakehouse and seed notebook |
+| `Silver/` | Silver Lakehouse and transform notebook |
+| `Gold/` | Gold Lakehouse, aggregate notebook, semantic model, and report |
+| `Seed_Data/` | Master refresh pipeline |
+| `semanticlink.Environment/` | Pinned Semantic Link runtime libraries |
+| `scripts/deploy_to_fabric.py` | Dynamic OIDC deployment implementation |
+| `scripts/validate_repository.py` | Source and pipeline contract validation |
 
-Items are in **Fabric Git source format** — produced when you Git-connect a workspace and
-**commit from Fabric**.
+Fabric Git stores item definitions, not Lakehouse table data. A new workspace must run the master
+pipeline after deployment to create and populate its tables.
 
-## End-to-end setup
+## Dynamic deployment
 
-There are two different first-time paths:
+The deployer resolves both workspace IDs by display name at runtime. It then:
 
-- **Fresh Dev from Git:** use Part A. Git creates the item definitions, but notebook bindings,
-   Environment publication, and all table data still need bootstrapping.
-- **Fresh target deployed by `NB_04_Deploy`:** use Part B. `NB_04` deploys and rebinds the item
-   definitions, but the Lakehouses are still empty until the notebooks run.
+1. Provisions or reuses the target workspace identity.
+2. Grants that identity Contributor access to the target workspace if it has no existing role.
+3. Creates or reuses a `Notebook.Actions` connection backed by that identity.
+4. Discovers Fabric item folders from their `.platform` files.
+5. Removes generated Python cache files from Fabric item folders.
+6. Generates an ephemeral `parameter.yml`.
+7. Replaces the current-workspace placeholder with the target workspace ID.
+8. Replaces pipeline logical item IDs with target item IDs.
+9. Replaces the dedicated notebook-connection sentinel with the target connection ID.
+10. Replaces source Lakehouse IDs with target Lakehouse IDs.
+11. Publishes changed, missing, or environment-drifted items.
+12. Deletes only Fabric items whose `.platform` file was deleted in the compared Git range.
+13. Removes `parameter.yml` on process exit, including failed deployments.
 
-### Key Vault private networking prerequisite
+The source placeholders have separate meanings and must stay distinct:
 
-`NB_04_Deploy` is the **only tracked notebook in this repository that reads Azure Key Vault**. It
-calls `notebookutils.credentials.getSecret(...)` to retrieve the GitHub PAT before cloning the repo
-when it runs inside Fabric. `NB_01`, `NB_02`, and `NB_03` do not read Key Vault.
-
-If the Key Vault blocks public network access, create a Fabric **managed private endpoint** to that
-vault in every workspace where `NB_04_Deploy` can execute. Managed private endpoints are workspace
-scoped; an endpoint created in Dev is not inherited by Test or Prod.
-
-| Workspace | Key Vault endpoint required? |
+| Source value | Meaning |
 | --- | --- |
-| Dev | Yes, when `NB_04_Deploy` runs in Dev |
-| Test | Yes, when `NB_04_Deploy` runs in Test |
-| Prod | Yes, when `NB_04_Deploy` runs in Prod |
-| Target-only workspace | No, if `NB_04_Deploy` runs elsewhere and only publishes into this workspace |
-| Local machine / CI runner | No Fabric endpoint; the checked-out repo is used and Key Vault cloning is skipped |
+| `00000000-0000-0000-0000-000000000000` | Current workspace |
+| `11111111-1111-1111-1111-111111111111` | Notebook Workspace Identity connection |
+| `.platform` `config.logicalId` | Pipeline item reference |
 
-For a consistent Dev/Test/Prod operating model, provision and approve the endpoint in all three
-workspaces before the first deployment:
+Do not replace these with live Production IDs. Runtime IDs belong only in the generated,
+untracked `parameter.yml`.
 
-1. In Azure, confirm the `Microsoft.Network` resource provider is registered in the subscription.
-2. Copy the Key Vault resource ID from **Azure portal → Key Vault → Properties**. Its format is:
+## GitHub configuration
 
-   ```text
-   /subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.KeyVault/vaults/<vault-name>
-   ```
+The [production workflow](.github/workflows/deploy-production.yml) runs on pushes to `main` and can
+also be dispatched manually. Configure a GitHub `production` Environment with:
 
-3. In the Fabric **Dev** workspace, open **Workspace settings → Network security → Managed private
-   endpoints → Create**.
-4. Enter a unique endpoint name, paste the Key Vault resource ID, and create the request. Use the
-   Azure resource ID, not the `https://<vault-name>.vault.azure.net/` URL.
-5. In Azure, open **Key Vault → Networking → Private endpoint connections**, select the pending
-   Fabric request, and approve it.
-6. Return to the Fabric workspace's **Network security** page, refresh it, and wait until provisioning
-   is successful and the connection status is **Approved**. A created or pending endpoint is not ready.
-7. Repeat Steps 3–6 independently for **Test** and **Prod**. The same Key Vault then has three private
-   endpoint connections, one from each Fabric workspace.
-8. Grant the identity that actually runs `NB_04_Deploy` permission to read the PAT secret. With Azure
-   RBAC, use the least-privilege **Key Vault Secrets User** role; with legacy access policies, grant
-   secret **Get** permission. Network approval and secret authorization are both required.
-9. In each execution workspace, run this preflight without printing the secret:
-
-   ```python
-   notebookutils.credentials.getSecret(
-       "https://<vault-name>.vault.azure.net/",
-       "<github-pat-secret-name>",
-   )
-   print("Key Vault network and secret access succeeded")
-   ```
-
-Do not run `NB_04_Deploy` in a workspace until this preflight succeeds there. If a pipeline or service
-account submits the notebook, grant access to that submitting identity and test in that execution
-context; an interactive test under a different user does not validate the pipeline identity.
-
-### Part A — Set up a fresh Dev workspace from Git
-
-1. **Fork and connect the repo.** Fork this repository, create/open the Dev workspace, and connect
-   Fabric Git integration to your fork and branch. Sync the workspace from Git.
-
-2. **Attach the notebook Lakehouses.** Git carries the original workspace GUIDs, which do not resolve
-   in a different workspace. In each notebook's Lakehouses pane, attach these items and set the default:
-
-   | Notebook | Attach | Default |
-   | --- | --- | --- |
-   | `NB_01_Seed_Bronze` | `Bronze_LH` | `Bronze_LH` |
-   | `NB_02_Transform_Silver` | `Bronze_LH`, `Silver_LH` | `Silver_LH` |
-   | `NB_03_Aggregate_Gold` | `Silver_LH`, `Gold_LH` | `Gold_LH` |
-
-   `NB_04_Deploy` does not need a Lakehouse attachment.
-
-3. **Publish the `semanticlink` Environment.** Open `semanticlink` and select **Publish**. Wait for
-   the build to finish (~10–20 minutes). Git sync creates the Environment definition but does not
-   build its libraries. `NB_03` needs `semantic-link-labs` / `sempy_labs`.
-
-4. **Create the Bronze source tables.** Run `NB_01_Seed_Bronze` and verify these tables exist under
-   `Bronze_LH.dbo`:
-
-   - `production_raw`
-   - `cost_raw`
-   - `schedule_raw`
-
-5. **Create the Silver source tables.** Run `NB_02_Transform_Silver` and verify these tables exist
-   under `Silver_LH.dbo`:
-
-   - `production_conformed`
-   - `cost_conformed`
-   - `schedule_conformed`
-
-6. **Run the Gold notebook.** Run `NB_03_Aggregate_Gold`. It creates:
-
-   - `production_daily`
-   - `cost_monthly`
-   - `schedule_summary`
-   - `field_kpi_facts`
-
-   It then rebinds and refreshes the Direct Lake semantic model `Gold_SM`. On the first run, newly
-   created Delta tables can take several minutes to register; let the built-in refresh retry continue.
-
-7. **Validate Dev end to end.** Run `PL_Refresh_Master`. It should complete this fixed sequence:
-
-    ```text
-    NB_01_Seed_Bronze
-      → NB_02_Transform_Silver
-      → NB_03_Aggregate_Gold
-      → Gold_SM refreshed by NB_03
-    ```
-
-    Open `Gold_Dashboard` and confirm the visuals contain data. From now on, run
-   `PL_Refresh_Master`; the manual notebook sequence above is only for first-time setup.
-
-### Part B — Deploy and bootstrap a fresh target workspace
-
-1. **Complete Part A in Dev first.** Dev must work end to end before it is used as the deployment source.
-
-2. **Commit from Fabric to Git.** Commit the validated Dev item definitions to your fork. Table data is
-   never committed; only item and Lakehouse definitions are stored in Git.
-
-3. **Prepare deployment authentication and networking.** The identity running `NB_04_Deploy` must be
-   Admin/Member on both Dev and the target workspace. For an in-Fabric run, store a fine-grained,
-   repo-scoped GitHub PAT in Azure Key Vault, complete the **Key Vault private networking prerequisite**
-   above for the workspace running the notebook, and pass its preflight. A local/CI run can use the
-   existing checkout and does not need the PAT or a Fabric managed private endpoint.
-
-4. **Create an empty target workspace.** For example, create `ws-FabricCICD-PROD`. Do not manually create
-   its Fabric items; `NB_04_Deploy` creates them from Git.
-
-5. **Run `NB_04_Deploy`.** In its parameters section, set:
-
-   - `target_workspace_name` to the target workspace
-   - `environment` to `Production`
-   - `dev_workspace_name` to the validated Dev workspace
-   - For an in-Fabric run: `git_repo_url`, `key_vault_url`, and `git_pat_secret`
-   - For local/CI: leave `local_repo_path = ""` to auto-detect the checkout
-
-   Run all sections. `NB_04` creates/updates the Fabric items, rewrites cross-workspace references,
-   rebinds `Gold_SM` to the target `Gold_LH`, and publishes the `semanticlink` Environment. The first
-   Environment build can take ~20 minutes.
-
-6. **Confirm target bindings.** In the target workspace, verify the three notebook attachments match
-   the table in Part A Step 2.
-
-7. **Bootstrap Bronze and Silver in the target.** The deployed Lakehouses are empty. Run
-   `NB_01_Seed_Bronze`, then `NB_02_Transform_Silver`. Confirm the three Silver tables exist.
-
-8. **Run the target pipeline.** Run `PL_Refresh_Master`. Re-running `NB_01` and `NB_02` is intentional
-   and safe. `NB_03` creates all Gold tables and refreshes `Gold_SM`.
-
-9. **Validate the target.** Confirm all four tables exist under `Gold_LH.dbo`:
-
-    - `production_daily`
-    - `cost_monthly`
-    - `schedule_summary`
-    - `field_kpi_facts`
-
-    Open `Gold_Dashboard` and verify it displays current data.
-
-### First-run checkpoints
-
-| Before this action | This must already be true |
+| Variable | Purpose |
 | --- | --- |
-| Run `NB_03_Aggregate_Gold` | All three Silver conformed tables exist |
-| Open `Gold_Dashboard` | `NB_03` completed and refreshed `Gold_SM` |
-| Use only `PL_Refresh_Master` for future runs | Notebook connections are configured |
+| `AZURE_CLIENT_ID` | Entra application used for GitHub OIDC |
+| `AZURE_TENANT_ID` | Entra tenant containing the Fabric workspaces |
+| `FABRIC_DEV_WORKSPACE` | Source workspace display name |
+| `FABRIC_PROD_WORKSPACE` | Target workspace display name |
 
-## What NB_04 does
+Create an Entra federated credential for the repository's GitHub `production` Environment with
+audience `api://AzureADTokenExchange`. Do not create a client secret. Enable service-principal use
+of Fabric APIs and grant the deployment principal enough access to read Dev and publish to Prod.
 
-**Discovers** every production item outside `Deploy/` and resolves its Dev GUIDs by name → **generates `parameter.yml`** so
-fabric-cicd rewrites each Dev workspace/item GUID to the target → **publishes all supported items**
-with the notebook's Fabric token. GitHub Actions provides the automatic OIDC/SPN deployment path.
+The target Workspace Identity is the notebook runtime identity; it is separate from the GitHub OIDC
+deployment principal. The deployer grants its workspace role, creates the connection, and injects
+the connection ID, so a new target does not require manual identity or connection setup.
 
-## Change loop
+## Development flow
 
-Edit in **Dev** → **commit from Fabric** → merge to `main` → GitHub deploys affected items through
-the OIDC service principal. Use `NB_04_Deploy` only for a manual in-Fabric deployment.
+1. Branch from current `main` into a short-lived feature branch and feature workspace.
+2. Make and run the Fabric changes in that workspace.
+3. Commit the Fabric item definitions to the feature branch.
+4. Open a pull request; `.github/workflows/validate-pr.yml` validates the source.
+5. Merge the approved pull request into `main`.
+6. Let `.github/workflows/deploy-production.yml` deploy Production.
+7. Run `PL_Refresh_Master` in Production and verify all three activities.
 
-## Key NB_04 parameters
+Use `--full-deploy` only for a complete bootstrap or recovery. The optional
+`--recreate-analytics-items` workflow input deliberately recreates `Gold_SM` and `Gold_Dashboard`;
+it is not part of normal deployment.
 
-| Parameter | Default | Purpose |
-| --- | --- | --- |
-| `target_workspace_name` | `ws-FabricCICD-PROD` | Stage to deploy into |
-| `environment` | `Production` | Stage label used by `parameter.yml` |
-| `dev_workspace_name` | `ws-FabricCICD-DEV` | Source workspace (GUIDs → tokens) |
-| `generate_parameter_yml` | `True` | Auto-build `parameter.yml` from the repo |
-| `rebind_direct_lake` | `True` | Re-point Direct Lake models to the target lakehouse |
-| `include_lakehouses` | `True` | Deploy lakehouses from the repo |
-| `remove_orphans` | `False` | Delete target items no longer in Git |
+## Fresh workspace validation
 
-## Good to know
+The `semanticlink` Environment must be published before NB03 can import `sempy_labs`. After the
+first deployment, run `PL_Refresh_Master` and verify:
 
-- **Table data isn't in Git** — only the lakehouse container. Always run `PL_Refresh_Master` after a deploy.
-- **`NB_04_Deploy` publishes the Environment for you** on deploy targets (fabric-cicd builds it and
-  waits, ~20 min on first run). Only **Git-synced** workspaces (e.g. Dev) need the manual Environment
-  publish described in Part A.
-- **Direct Lake on OneLake** can't be rebound by a deployment rule, so `NB_04` does it in code (`semantic-link-labs`; Admin/Member suffices).
-- **Only `NB_04_Deploy` reads Key Vault in the tracked solution.** A private Key Vault requires one
-   approved managed private endpoint per Fabric workspace where that notebook executes, plus secret
-   read permission for the submitting identity.
-- **`parameter.yml` is generated at deploy time**, not checked in — keep `generate_parameter_yml = True`.
-- Items pair across stages by **name** — keep display names identical.
-
-## Team development and automatic production deployment
-
-Use `main` as the protected integration and release branch. Do not develop directly in the shared
-Dev workspace or commit directly to `main` after the initial repository setup.
-
-### Developer workflow
-
-1. Start from the shared Dev workspace connected to `main`, and make sure it is synchronized from Git.
-2. In Fabric source control, use **Branch out to new workspace** to create a short-lived
-   `feature/<work-item>` branch and a dedicated feature workspace. One workspace can connect to only
-   one branch, so each developer changes and tests items in that isolated workspace.
-3. Run the feature workspace end to end. Lakehouse table data isn't copied
-   through Git, so bootstrap them as described in Part A when the feature requires executable data.
-4. Commit from the feature workspace to its feature branch. Never commit secrets or the insecure
-   deployment notebook.
-5. Open a pull request from `feature/<work-item>` to `main`. The **Validate Fabric pull request**
-   workflow checks Python syntax, JSON item definitions, and required Fabric item files.
-6. Require at least one approving review and require the validation check through the GitHub `main`
-   branch protection/ruleset. Disable direct pushes to `main`.
-7. After the PR merges, delete the feature branch and its temporary Fabric workspace, or clean and
-   reuse a developer workspace by reconnecting it to a new branch created from current `main`.
-8. Update the shared Dev workspace from Git after merges so the next feature branches from the latest
-   integrated definitions.
-
-### GitHub Actions production setup
-
-The [production workflow](.github/workflows/deploy-production.yml) runs on every merge/push to
-`main`, so Fabric items can use any valid root folder name without maintaining path filters. It
-checks out the approved commit, signs in without a client secret by using GitHub OIDC, installs the
-pinned dependencies on the temporary runner, validates the source, and deploys only changed,
-missing, or environment-drifted items to Prod, including notebooks and data pipelines. When a commit
-deletes an item's `.platform` file,
-the same run deletes only that matching Prod item; unrelated Fabric-managed items are preserved.
-The workflow excludes the entire `Deploy/` subtree and removes any existing deployment notebook
-from Prod. `NB_04_Deploy` applies the same rule when it performs a manual deployment.
-
-For Production analytics items that existed before OIDC deployment was configured, manually run
-the production workflow once with **Recreate analytics items** enabled. The authenticated
-`fabric-rest` service principal deletes `Gold_Dashboard` first and then `Gold_SM`, before publishing
-`Gold_SM.SemanticModel` and `Gold_Dashboard.Report` from Git in dependency order. This establishes
-the deployment SPN as the creator of both replacement items without adding ownership logic to a
-notebook. The option defaults to false and is not used by normal pushes. Because recreation assigns
-new Fabric item IDs, use it only for this deliberate one-time ownership reset.
-
-Configure it once:
-
-1. Create a Microsoft Entra app registration/service principal for GitHub deployment. This repository
-   uses the `fabric-rest` application:
-
-   | Identifier | Value |
-   | --- | --- |
-   | Application (client) ID | `2706a024-95ea-48bd-b789-b4630f13c72d` |
-   | Directory (tenant) ID | `ad340c84-1886-4202-a483-2da2cb9168eb` |
-   | Service principal object ID | `c1feeecc-0250-4a03-873a-b707fd90e902` |
-
-   Use the application/client ID for GitHub's `AZURE_CLIENT_ID`. Use the service principal object ID
-   when adding or checking Fabric workspace role assignments.
-2. Add the GitHub OIDC federated credential in **Microsoft Entra ID → App registrations →
-   fabric-rest → Certificates & secrets → Federated credentials → Add credential**. The GitHub token
-   emitted by this workflow has been verified in the Actions log. Select **Other issuer** and enter:
-
-   | Form field | Value |
-   | --- | --- |
-   | Federated credential scenario | **Other issuer** |
-   | Issuer | `https://token.actions.githubusercontent.com` |
-   | Subject identifier | `repo:dibakardharchoudhury/FabricCICD:environment:production` |
-   | Audience | `api://AzureADTokenExchange` |
-   | Name | `github-fabriccicd-production` |
-
-   The portal's **GitHub Actions deploying Azure resources** scenario now asks for `Organization`,
-   `Organization ID`, `Repository`, `Repository ID`, and `Entity type`, then generates an immutable-ID
-   subject. Do not use that generated subject for this repository unless GitHub's organization-level
-   OIDC subject template is also configured to emit the same immutable-ID claim. With GitHub's current
-   default claims, it would not match. The exact subject above is confirmed by the workflow log and
-   matches `environment: production`, including case.
-
-   Creating this trust requires an authorized application owner or an Entra **Application
-   Administrator**, **Cloud Application Administrator**, or **Global Administrator**. Do not create
-   or store a client secret; GitHub exchanges its OIDC token through this credential.
-3. In the Fabric Admin portal, enable **Service principals can use Fabric APIs**, preferably scoped to
-   a security group containing only this deployment service principal.
-4. Add the service principal to both Fabric workspaces under **Manage access**. The least-privilege
-   assignments used by this repository are:
-
-   | Workspace | Required role | Reason |
-   | --- | --- | --- |
-   | `ws-FabricCICD-DEV` | **Viewer** | Resolves source item IDs. |
-   | `ws-FabricCICD-PROD` | **Member** | Creates and updates Fabric items, including environment-specific Direct Lake definitions. |
-
-   **Admin** in Prod is also sufficient but is not required for the current deployment workflow.
-   Search for `fabric-rest` when adding access and verify that its application ID is
-   `2706a024-95ea-48bd-b789-b4630f13c72d`.
-5. In GitHub, create the `production` Environment under **Settings → Environments** and add these
-   environment variables:
-
-   | Variable | Value |
-   | --- | --- |
-   | `AZURE_CLIENT_ID` | Entra application/client ID |
-   | `AZURE_TENANT_ID` | Entra tenant ID |
-   | `FABRIC_DEV_WORKSPACE` | Shared Dev workspace name, for example `ws-FabricCICD-DEV` |
-   | `FABRIC_PROD_WORKSPACE` | Production workspace name, for example `ws-FabricCICD-PROD` |
-
-6. Optionally configure required reviewers on the GitHub `production` Environment for a second
-   release approval after the PR approval. Without environment reviewers, deployment starts
-   automatically as soon as the approved PR merges.
-
-GitHub Actions does **not** run `NB_04`, clone with the Key Vault PAT, or use the Fabric workspace's
-Key Vault managed private endpoint. GitHub checks out the repository with its built-in token and the
-deployment script authenticates to Fabric through OIDC. `NB_04` remains available for manual,
-in-Fabric deployment.
-
-Notebook runtime identity is configured on each activity under **Settings → Connection**; changing
-pipeline or item ownership is not a substitute for an explicit Notebook activity connection.
-Microsoft documents
-[Notebook activities with service-principal or workspace-identity connections](https://learn.microsoft.com/fabric/data-factory/notebook-activity).
-An SPN connection requires a tenant ID, client ID, and service-principal key stored in Fabric. The
-current `fabric-rest` app is GitHub OIDC-only and has no key, so that connection cannot be created
-without deliberately adding a credential. Do not substitute the pipeline's `LastModifiedBy` value.
-
-### What "only changed items" means
-
-The workflow compares the pushed commit with the push event's previous commit and passes only changed
-Fabric item folders to `publish_all_items()`. It also includes repository items missing from Prod, so
-the same command can bootstrap newly added items. Semantic models whose deployed connection still
-contains the Dev workspace ID are included as environment drift and repaired even when their Git
-folder did not change. Use `--full-deploy` only for a deliberate complete bootstrap or recovery.
-
-Environment replacement still runs for every selected item. Notebook default and known lakehouse
-IDs, pipeline logical item references, and zero workspace placeholders
-resolve to their Prod counterparts. Direct Lake on OneLake models receive both the Prod workspace ID
-and matching Prod lakehouse ID in the same semantic-model publish transaction; there is no separate
-post-publish XMLA save.
-
-### Verified smoke tests
-
-| Case | Result |
+| Lakehouse | Tables |
 | --- | --- |
-| Add `CICD_E2E_Verification.Lakehouse` | [Run 34244155478](https://github.com/dibakardharchoudhury/FabricCICD/actions/runs/34244155478) created it in Prod and published no other item. |
-| Change only its `.platform` description | [Run 34244500599](https://github.com/dibakardharchoudhury/FabricCICD/actions/runs/34244500599) updated the same Prod item ID and published no other item. |
+| `Bronze_LH.dbo` | `production_raw`, `cost_raw`, `schedule_raw` |
+| `Silver_LH.dbo` | `production_conformed`, `cost_conformed`, `schedule_conformed` |
+| `Gold_LH.dbo` | `production_daily`, `cost_monthly`, `schedule_summary`, `field_kpi_facts` |
 
-Deletion is change-scoped: removing an item folder from Git deletes the target item with the same
-type and display name. The workflow does not use broad orphan removal, so Fabric-managed staging
-Lakehouses and other workspace-only operational items are not affected.
+The Workspace Identity path can execute all notebooks and rebind the Direct Lake model. However,
+Microsoft's default token service for service-principal-triggered notebooks supports only a subset
+of Semantic Link functions, and semantic-model refresh is not in that supported subset. The live
+Production run reached NB03 and received `403 Forbidden` from the Power BI refresh API. Microsoft's
+documented workaround requires manually authenticating Semantic Link with service-principal
+credentials. This repository intentionally does not add a client secret, certificate, Key Vault
+dependency, interactive OAuth connection, raw REST refresh, or token wrapping.
 
 ## Troubleshooting
 
-### `Gold_SM` refresh fails on a stage's **first** run (`0xC14700DF`)
+### NB03 cannot import `sempy_labs`
 
-First deploy: `NB_03` creates the Gold tables from scratch; new Delta objects (esp.
-`field_kpi_facts`) take minutes to register in OneLake metadata before Direct Lake can frame them.
-`NB_03` retries ~28 minutes. If it still fails, inspect the run diagnostics before distinguishing
-metadata propagation from an access problem. Steady-state runs preserve table identity.
+Publish the `semanticlink` Environment and wait for its library build to finish. Git synchronization
+creates the Environment definition but does not build it.
 
-### `NB_03_Aggregate_Gold` fails: `ModuleNotFoundError: No module named 'sempy_labs'`
+### Manual NB03 refresh uses the Fabric host for a Power BI path
 
-The `semanticlink` Environment is present but **unpublished**, so `semantic-link-labs` isn't installed
-on the Spark pool. This happens when the Environment arrived via **Git sync** (Git brings the
-definition but doesn't build it) — typically the Dev workspace. Fix: **`semanticlink` → Publish**
-(~10–20 min), then re-run `PL_Refresh_Master`. Re-publish only when libraries change.
-Automated target deployment publishes changed Environment definitions and waits for completion.
+NB03 intentionally corrects the pinned SemPy client's default URL to `https://api.powerbi.com/`
+before importing Labs. Keep that workaround while the pinned runtime requires it.
 
-### Pipeline refresh calls `api.fabric.microsoft.com/v1.0/myorg/.../refreshes`
+### Notebook activity reports a connection or identity error
 
-The pinned SemPy runtime defaults a fresh pipeline session's `PowerBIRestClient` to the Fabric API
-host, while `semantic-link-labs` supplies a Power BI `/v1.0/myorg/.../refreshes` path. `NB_03`
-overrides the client's default-URL resolver to return `https://api.powerbi.com/` before importing
-Labs, then keeps using `labs.refresh_semantic_model`. Interactive sessions may not reproduce this
-because an existing SemPy client can already have the Power BI base URL cached.
+Rerun deployment. It idempotently provisions the target Workspace Identity, creates or reuses the
+named Notebook connection, grants Contributor access when needed, and injects the connection ID
+into all three activities. Do not edit the pipeline connections manually.
 
-### Pipeline refresh calls `api.powerbi.com/.../refreshes` but returns `403`
+### NB03 Semantic Link refresh returns 403
 
-This is an authorization failure, not first-run metadata propagation. `NB_03` prints the non-secret
-`idtyp`, `oid`, `appid`, and `aud` claims from the Power BI token used by the pipeline session. Match
-that caller to the Notebook activity's **Settings → Connection** identity and grant that principal
-semantic-model write access in the target workspace. A successful GitHub deployment does not prove
-this permission: the GitHub OIDC service principal publishes the notebook definition, while the
-Notebook activity executes with its configured connection identity. Re-running without changing
-that identity or its access will return the same `403`.
+The Direct Lake rebind has already completed when this error occurs. Semantic-model refresh is not
+supported by Semantic Link's default token service in a service-principal-triggered notebook. A
+workspace role alone cannot enable that unsupported function. Do not add a secret-based fallback
+unless the credential-free design requirement changes.
+
+### First Direct Lake frame reports `0xC14700DF`
+
+New Delta tables can take several minutes to appear in OneLake metadata. NB03 retries the initial
+frame. If all retries fail, inspect the NB03 notebook diagnostics.
