@@ -52,6 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--delete-excluded-items", action="store_true")
     parser.add_argument("--full-deploy", action="store_true")
     parser.add_argument("--remove-orphans", action="store_true")
+    parser.add_argument("--recreate-analytics-items", action="store_true")
     return parser.parse_args()
 
 
@@ -221,6 +222,23 @@ def delete_excluded_folders(
         print(f"Deleted excluded folder: {folder['displayName']} ({folder['id']})")
 
 
+def recreate_analytics_items(target_workspace_id: str, api: FabricApi) -> None:
+    target_items = api.get(f"/workspaces/{target_workspace_id}/items").get("value", [])
+    target_by_type_name = {
+        (item["type"], item["displayName"]): item["id"] for item in target_items
+    }
+    for item_type, display_name in (
+        ("Report", "Gold_Dashboard"),
+        ("SemanticModel", "Gold_SM"),
+    ):
+        item_id = target_by_type_name.get((item_type, display_name))
+        if item_id is None:
+            print(f"SPN recreation: {display_name}.{item_type} is already absent")
+            continue
+        api.delete(f"/workspaces/{target_workspace_id}/items/{item_id}")
+        print(f"SPN recreation: deleted {display_name}.{item_type} ({item_id})")
+
+
 def generate_parameters(
     repository_directory: Path,
     repository_items: list[tuple[str, str, Path]],
@@ -364,20 +382,26 @@ def main() -> None:
     print("Excluded item names: " + ", ".join(sorted(EXCLUDED_ITEM_NAMES)))
     print("Excluded directories: " + (", ".join(sorted(excluded_directories)) or "(none)"))
     if args.full_deploy:
+        if args.recreate_analytics_items:
+            raise ValueError("--recreate-analytics-items cannot be combined with --full-deploy")
         print("Full deployment requested")
         publish_all_items(
             workspace,
             item_name_exclude_regex=r"^NB_04_Deploy(?:_NOTSECURE)?$",
         )
     else:
-        items_to_publish = select_items_to_publish(
-            repository_items,
-            dev_workspace_id,
-            target_workspace_id,
-            api,
-            repository_directory,
-            args.git_compare_ref,
-        )
+        if args.recreate_analytics_items:
+            recreate_analytics_items(target_workspace_id, api)
+            items_to_publish = ["Gold_SM.SemanticModel", "Gold_Dashboard.Report"]
+        else:
+            items_to_publish = select_items_to_publish(
+                repository_items,
+                dev_workspace_id,
+                target_workspace_id,
+                api,
+                repository_directory,
+                args.git_compare_ref,
+            )
         if items_to_publish:
             append_feature_flag("enable_experimental_features")
             append_feature_flag("enable_items_to_include")

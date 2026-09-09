@@ -279,6 +279,14 @@ the same run deletes only that matching Prod item; unrelated Fabric-managed item
 The workflow excludes the entire `Deploy/` subtree and removes any existing deployment notebook
 from Prod. `NB_04_Deploy` applies the same rule when it performs a manual deployment.
 
+For Production analytics items that existed before OIDC deployment was configured, manually run
+the production workflow once with **Recreate analytics items** enabled. The authenticated
+`fabric-rest` service principal deletes `Gold_Dashboard` first and then `Gold_SM`, before publishing
+`Gold_SM.SemanticModel` and `Gold_Dashboard.Report` from Git in dependency order. This establishes
+the deployment SPN as the creator of both replacement items without adding ownership logic to a
+notebook. The option defaults to false and is not used by normal pushes. Because recreation assigns
+new Fabric item IDs, use it only for this deliberate one-time ownership reset.
+
 Configure it once:
 
 1. Create a Microsoft Entra app registration/service principal for GitHub deployment. This repository
