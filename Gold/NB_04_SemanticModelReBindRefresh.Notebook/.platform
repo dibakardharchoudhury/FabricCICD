@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "NB_04_SemanticModelReBindRefresh",
+    "description": "Rebinds Gold_SM to Gold_LH and performs a full semantic model refresh"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "a6838dc9-1db8-46dc-8991-696054647e18"
+  }
+}

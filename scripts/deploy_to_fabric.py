@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import base64
 import json
 import os
 from pathlib import Path
@@ -41,6 +42,12 @@ SUPPORTED_ITEM_TYPES = {
     "VariableLibrary",
     "Warehouse",
 }
+ADMIN_OWNED_ITEMS = {
+    ("Notebook", "NB_04_SemanticModelReBindRefresh"),
+    ("DataPipeline", "PL_SemanticModel_Rebind_Refresh"),
+}
+ADMIN_UPN = "admin@mngenvmcap218279.onmicrosoft.com"
+ADMIN_OBJECT_ID = "7ab1a6b2-d2e6-41b8-92ba-1fb3a8ba5bc0"
 
 
 def parse_args() -> argparse.Namespace:
@@ -52,6 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--git-compare-ref", default="HEAD~1")
     parser.add_argument("--full-deploy", action="store_true")
     parser.add_argument("--remove-orphans", action="store_true")
+    parser.add_argument("--admin-owned-only", action="store_true")
     return parser.parse_args()
 
 
@@ -329,7 +337,21 @@ def select_items_to_publish(
             selected.add(f"{display_name}.{item_type}")
             print(f"Selected {display_name}.{item_type}: its connection still points to Dev")
 
-    return sorted(selected)
+    return sorted(
+        item
+        for item in selected
+        if tuple(reversed(item.rsplit(".", 1))) not in ADMIN_OWNED_ITEMS
+    )
+
+
+def verify_admin_identity(credential: Any) -> None:
+    token = credential.get_token(FABRIC_SCOPE).token
+    encoded_claims = token.split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(encoded_claims + "=" * (-len(encoded_claims) % 4)))
+    upn = claims.get("upn") or claims.get("preferred_username")
+    if claims.get("oid", "").lower() != ADMIN_OBJECT_ID or upn.lower() != ADMIN_UPN.lower():
+        raise PermissionError(f"Administrator-owned deployment requires Azure CLI user {ADMIN_UPN}")
+    print(f"Verified administrator identity: {upn} ({claims['oid']})")
 
 
 def main() -> None:
@@ -350,6 +372,15 @@ def main() -> None:
     print(f"Dev workspace: {args.dev_workspace} ({dev_workspace_id})")
     print(f"Target workspace: {args.target_workspace} ({target_workspace_id})")
     repository_items = discover_items(repository_directory)
+    if args.admin_owned_only:
+        verify_admin_identity(credential)
+        repository_items = [
+            item for item in repository_items if (item[0], item[1]) in ADMIN_OWNED_ITEMS
+        ]
+    else:
+        repository_items = [
+            item for item in repository_items if (item[0], item[1]) not in ADMIN_OWNED_ITEMS
+        ]
     remove_generated_item_artifacts(repository_items)
     item_types = sorted(
         {item_type for item_type, _name, _path in repository_items if item_type != "VariableLibrary"}
@@ -374,7 +405,13 @@ def main() -> None:
         token_credential=credential,
     )
     print(f"Comparing {len(repository_items)} source items with {args.target_workspace}")
-    if args.full_deploy:
+    if args.admin_owned_only:
+        append_feature_flag("enable_experimental_features")
+        append_feature_flag("enable_items_to_include")
+        admin_items = sorted(f"{name}.{item_type}" for item_type, name, _path in repository_items)
+        print(f"Publishing administrator-owned items as {ADMIN_UPN}: " + ", ".join(admin_items))
+        publish_all_items(workspace, items_to_include=admin_items)
+    elif args.full_deploy:
         print("Full deployment requested")
         publish_all_items(workspace)
     else:

@@ -153,46 +153,6 @@ _write_gold(df_kpi_facts, "field_kpi_facts")
 
 print(f"✅ Gold_LH.field_kpi_facts: {df_kpi_facts.count()} rows")
 
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
-# CELL ********************
-
-# Cell 6 — Validate Gold and rebind the Direct Lake model
-from sempy_labs import directlake
-import notebookutils
-
-_EXPECTED_TABLES = ["production_daily", "cost_monthly", "schedule_summary", "field_kpi_facts"]
-
-# Resolve the current workspace at runtime.
-_ws_id = notebookutils.runtime.context.get("currentWorkspaceId") or spark.conf.get("trident.workspace.id")
-if not _ws_id:
-    raise Exception("Could not resolve the current workspace id — cannot rebind Gold_SM.")
-
-print("\n── Gold Layer Validation ────────────────────────────")
-for _tbl in _EXPECTED_TABLES:
-    print(f"  Gold_LH.{_tbl}: {spark.table(f'Gold_LH.dbo.{_tbl}').count()} rows")
-
-_SEMANTIC_MODEL = "Gold_SM"
-
-# Rebind defensively after deployment to the current workspace's Gold Lakehouse.
-_GOLD_LAKEHOUSE = "Gold_LH"
-_gold_lh_meta = notebookutils.lakehouse.get(_GOLD_LAKEHOUSE, _ws_id)
-_gold_lh_id   = _gold_lh_meta["id"] if isinstance(_gold_lh_meta, dict) else _gold_lh_meta.id
-directlake.update_direct_lake_model_connection(
-    dataset=_SEMANTIC_MODEL, workspace=_ws_id,
-    source=_gold_lh_id, source_type="Lakehouse",
-    source_workspace=_ws_id, use_sql_endpoint=False,
-)
-print(f"🔗 '{_SEMANTIC_MODEL}' Direct Lake connection re-pointed to '{_GOLD_LAKEHOUSE}' "
-      f"({_gold_lh_id}) in this workspace.")
-print("🏆 Gold aggregation COMPLETE — tables written and Gold_SM rebound")
-
 # METADATA ********************
 
 # META {

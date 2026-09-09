@@ -31,8 +31,9 @@ EXPECTED_GOLD_SNIPPETS = {
     '_write_gold(df_gold_cost, "cost_monthly")',
     '_write_gold(df_gold_sched, "schedule_summary")',
     '_write_gold(df_kpi_facts, "field_kpi_facts")',
-    "directlake.update_direct_lake_model_connection(",
 }
+REFRESH_NOTEBOOK = "NB_04_SemanticModelReBindRefresh"
+REFRESH_PIPELINE = "PL_SemanticModel_Rebind_Refresh"
 EXPECTED_ENVIRONMENT_PIP = {
     "fabric-cicd==1.3.0",
     "semantic-link-labs==0.16.0",
@@ -212,6 +213,36 @@ def main() -> None:
             failures.append(
                 f"{gold_path.relative_to(ROOT)}: contains removed refresh logic: {removed_snippet}"
             )
+
+    refresh_path = ROOT / "Gold" / f"{REFRESH_NOTEBOOK}.Notebook" / "notebook-content.py"
+    refresh_source = refresh_path.read_text(encoding="utf-8-sig")
+    for snippet in (
+        "directlake.update_direct_lake_model_connection(",
+        "labs.refresh_semantic_model(",
+        "refresh_semantic_model = True",
+        'return "https://api.powerbi.com/"',
+        '"403 Forbidden"',
+    ):
+        if snippet not in refresh_source:
+            failures.append(f"{refresh_path.relative_to(ROOT)}: missing required logic: {snippet}")
+
+    refresh_pipeline_path = ROOT / "Gold" / f"{REFRESH_PIPELINE}.DataPipeline" / "pipeline-content.json"
+    refresh_pipeline = json.loads(refresh_pipeline_path.read_text(encoding="utf-8-sig"))
+    refresh_activities = refresh_pipeline.get("properties", {}).get("activities", [])
+    refresh_notebook_id = next(
+        (logical_id for logical_id, identity in logical_items.items() if identity == ("Notebook", REFRESH_NOTEBOOK)),
+        None,
+    )
+    if len(refresh_activities) != 1:
+        failures.append(f"{refresh_pipeline_path.relative_to(ROOT)}: expected one notebook activity")
+    else:
+        refresh_properties = refresh_activities[0].get("typeProperties", {})
+        if refresh_activities[0].get("type") != "TridentNotebook":
+            failures.append(f"{refresh_pipeline_path.relative_to(ROOT)}: activity must be a notebook")
+        if refresh_properties.get("notebookId") != refresh_notebook_id:
+            failures.append(f"{refresh_pipeline_path.relative_to(ROOT)}: wrong notebook logicalId")
+        if refresh_properties.get("workspaceId") != "00000000-0000-0000-0000-000000000000":
+            failures.append(f"{refresh_pipeline_path.relative_to(ROOT)}: must use current-workspace placeholder")
 
     if failures:
         raise SystemExit("Repository validation failed:\n" + "\n".join(failures))
