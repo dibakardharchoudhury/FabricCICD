@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import base64
 import json
 import os
 from pathlib import Path
@@ -228,6 +229,38 @@ class FabricApi:
             raise ValueError(
                 f"Connection '{NOTEBOOK_CONNECTION_NAME}' exists with incompatible type or credentials"
             )
+
+        try:
+            pipeline_id = self.resolve_item_id(
+                workspace_id, "PL_Refresh_Master", "DataPipeline"
+            )
+        except ValueError:
+            pipeline_id = None
+        if pipeline_id:
+            definition = self.post(
+                f"/workspaces/{workspace_id}/items/{pipeline_id}/getDefinition", {}
+            )
+            parts = definition.get("definition", {}).get("parts", [])
+            pipeline_part = next(
+                (part for part in parts if part.get("path") == "pipeline-content.json"),
+                None,
+            )
+            if pipeline_part:
+                pipeline = json.loads(base64.b64decode(pipeline_part["payload"]))
+                connection_ids = {
+                    activity.get("externalReferences", {}).get("connection")
+                    for activity in pipeline.get("properties", {}).get("activities", [])
+                    if activity.get("type") == "TridentNotebook"
+                }
+                connection_ids.discard(None)
+                connection_ids.discard(CONNECTION_ID_PLACEHOLDER)
+                if len(connection_ids) == 1:
+                    connection_id = connection_ids.pop()
+                    print(
+                        "Reusing Notebook Workspace Identity connection from deployed "
+                        f"PL_Refresh_Master: {connection_id}"
+                    )
+                    return connection_id
 
         connection = self.post(
             "/connections",
