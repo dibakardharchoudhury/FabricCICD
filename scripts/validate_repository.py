@@ -31,11 +31,6 @@ EXPECTED_GOLD_SNIPPETS = {
     '_write_gold(df_gold_sched, "schedule_summary")',
     '_write_gold(df_kpi_facts, "field_kpi_facts")',
     "directlake.update_direct_lake_model_connection(",
-    "PowerBIRestClient._get_default_base_url = _powerbi_base_url",
-    "labs.refresh_semantic_model(",
-    'dataset=_SEMANTIC_MODEL, workspace=_ws_id, refresh_type="full"',
-    "# PARAMETERS CELL ********************",
-    "refresh_semantic_model = False",
 }
 EXPECTED_ENVIRONMENT_PIP = {
     "fabric-cicd==1.3.0",
@@ -54,6 +49,12 @@ def main() -> None:
         capture_output=True,
     ).stdout.decode("utf-8").split("\0")
     tracked_paths = [ROOT / path for path in tracked if path and (ROOT / path).is_file()]
+
+    for path in tracked_paths:
+        if path.name in {"parameter.yml", "parameter.yaml"}:
+            failures.append(
+                f"{path.relative_to(ROOT)}: generated deployment parameters must not be tracked"
+            )
 
     for path in tracked_paths:
         if path.suffix.lower() in TEXT_SUFFIXES or path.name == ".platform":
@@ -188,6 +189,17 @@ def main() -> None:
     for snippet in sorted(EXPECTED_GOLD_SNIPPETS):
         if snippet not in gold_source:
             failures.append(f"{gold_path.relative_to(ROOT)}: missing required logic: {snippet}")
+    for removed_snippet in (
+        "refresh_semantic_model",
+        "PowerBIRestClient",
+        "api.powerbi.com",
+        "_MAX_ATTEMPTS",
+        "_BACKOFF_SECS",
+    ):
+        if removed_snippet in gold_source:
+            failures.append(
+                f"{gold_path.relative_to(ROOT)}: contains removed refresh logic: {removed_snippet}"
+            )
 
     if failures:
         raise SystemExit("Repository validation failed:\n" + "\n".join(failures))

@@ -25,9 +25,8 @@ Gold_SM (Direct Lake) -> Gold_Dashboard
 3. `NB_03_Aggregate_Gold`
 
 NB03 writes the Gold tables and rebinds `Gold_SM` to the current workspace's `Gold_LH`. Pipeline
-runs do not refresh the semantic model. The guarded Semantic Link refresh path remains in NB03 but
-is frozen with `refresh_semantic_model=False` because service-principal-triggered notebook runs
-cannot use that Semantic Link function without adding separate credentials.
+runs do not refresh the semantic model because service-principal-triggered notebook runs cannot use
+that Semantic Link function without adding separate credentials.
 
 ## Repository layout
 
@@ -96,9 +95,7 @@ Notebook connection.
 6. Let `.github/workflows/deploy-production.yml` deploy Production.
 7. Run `PL_Refresh_Master` in Production and verify all three activities.
 
-Use `--full-deploy` only for a complete bootstrap or recovery. The optional
-`--recreate-analytics-items` workflow input deliberately recreates `Gold_SM` and `Gold_Dashboard`;
-it is not part of normal deployment.
+Use `--full-deploy` only for a complete bootstrap or recovery.
 
 ## Fresh workspace validation
 
@@ -135,8 +132,7 @@ refresh to NB03:
 4. Save the schedule and monitor both pipeline history and semantic model refresh history separately.
 
 This design keeps deployment credential-free and lets Fabric retry and monitor the data pipeline and
-semantic model as independent Production operations. The frozen Semantic Link code is retained only
-for future platform support or an explicitly approved authentication design.
+semantic model as independent Production operations.
 
 ## Troubleshooting
 
@@ -147,7 +143,7 @@ creates the Environment definition but does not build it.
 
 ### Gold_SM is not current after the pipeline
 
-This is expected because NB03 refresh is frozen. Use **Refresh now** for ad hoc validation or check
+This is expected because NB03 does not refresh the model. Use **Refresh now** for ad hoc validation or check
 the Production semantic model schedule and refresh history.
 
 ### First Direct Lake frame reports `0xC14700DF`

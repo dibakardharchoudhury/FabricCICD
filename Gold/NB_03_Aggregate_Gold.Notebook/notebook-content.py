@@ -27,19 +27,6 @@
 # META   }
 # META }
 
-# PARAMETERS CELL ********************
-
-refresh_semantic_model = False
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
-# CELL ********************
-
 # Aggregates Silver data into report-ready Gold tables.
 
 # Cell 1 — Imports
@@ -174,35 +161,24 @@ print(f"✅ Gold_LH.field_kpi_facts: {df_kpi_facts.count()} rows")
 
 # CELL ********************
 
-# Cell 6 — Validate Gold and refresh the Direct Lake model
-from sempy.fabric._client._rest_client import PowerBIRestClient
-
-def _powerbi_base_url(self):
-    return "https://api.powerbi.com/"
-
-PowerBIRestClient._get_default_base_url = _powerbi_base_url
-
-import sempy_labs as labs
+# Cell 6 — Validate Gold and rebind the Direct Lake model
 from sempy_labs import directlake
 import notebookutils
-import time
 
 _EXPECTED_TABLES = ["production_daily", "cost_monthly", "schedule_summary", "field_kpi_facts"]
 
 # Resolve the current workspace at runtime.
 _ws_id = notebookutils.runtime.context.get("currentWorkspaceId") or spark.conf.get("trident.workspace.id")
 if not _ws_id:
-    raise Exception("Could not resolve the current workspace id — cannot refresh Gold_SM.")
+    raise Exception("Could not resolve the current workspace id — cannot rebind Gold_SM.")
 
 print("\n── Gold Layer Validation ────────────────────────────")
 for _tbl in _EXPECTED_TABLES:
     print(f"  Gold_LH.{_tbl}: {spark.table(f'Gold_LH.dbo.{_tbl}').count()} rows")
 
 _SEMANTIC_MODEL = "Gold_SM"
-_MAX_ATTEMPTS   = 15
-_BACKOFF_SECS   = 120
 
-# Rebind defensively before refreshing.
+# Rebind defensively after deployment to the current workspace's Gold Lakehouse.
 _GOLD_LAKEHOUSE = "Gold_LH"
 _gold_lh_meta = notebookutils.lakehouse.get(_GOLD_LAKEHOUSE, _ws_id)
 _gold_lh_id   = _gold_lh_meta["id"] if isinstance(_gold_lh_meta, dict) else _gold_lh_meta.id
@@ -212,56 +188,8 @@ directlake.update_direct_lake_model_connection(
     source_workspace=_ws_id, use_sql_endpoint=False,
 )
 print(f"🔗 '{_SEMANTIC_MODEL}' Direct Lake connection re-pointed to '{_GOLD_LAKEHOUSE}' "
-      f"({_gold_lh_id}) in this workspace before refresh.")
-
-if refresh_semantic_model:
-    print(f"\n── Refreshing Direct Lake (on OneLake) model '{_SEMANTIC_MODEL}' (full reframe) ──")
-    print(f"Semantic Link Power BI endpoint: {PowerBIRestClient().default_base_url}")
-else:
-    print(f"⏭️ '{_SEMANTIC_MODEL}' refresh skipped by the caller.")
-
-_refreshed = not refresh_semantic_model
-for _attempt in range(1, _MAX_ATTEMPTS + 1) if refresh_semantic_model else ():
-    try:
-        labs.refresh_semantic_model(
-            dataset=_SEMANTIC_MODEL, workspace=_ws_id, refresh_type="full",
-        )
-        print(f"✅ '{_SEMANTIC_MODEL}' refreshed on attempt {_attempt}/{_MAX_ATTEMPTS} "
-              f"(Direct Lake reframe complete) — report is up to date.")
-        _refreshed = True
-        break
-    except Exception as _e:
-        _msg = str(_e)
-        _forbidden = "403 Forbidden" in _msg
-        _transient = not _forbidden and (
-            ("0xC14700DF" in _msg) or ("do not exist or access" in _msg.lower())
-        )
-        if _transient and _attempt < _MAX_ATTEMPTS:
-            print(f"⏳ Attempt {_attempt}/{_MAX_ATTEMPTS}: tables still syncing into metadata after "
-                  f"create-from-scratch; retrying in {_BACKOFF_SECS}s "
-                  f"(elapsed wait so far ~{(_attempt - 1) * _BACKOFF_SECS // 60} min)...")
-            time.sleep(_BACKOFF_SECS)
-            continue
-
-        _failure_guidance = (
-            "  • The Power BI API returned a non-retryable 403. Semantic-model refresh is not in\n"
-            "    the supported Semantic Link function subset for service-principal-triggered runs."
-            if _forbidden else
-            "  • 0xC14700DF / 'do not exist or access' can indicate create-from-scratch metadata sync.\n"
-            "    Extend _MAX_ATTEMPTS or _BACKOFF_SECS if the first-run sync exceeds this retry window."
-        )
-        raise Exception(
-            f"Refresh of Direct Lake (on OneLake) model '{_SEMANTIC_MODEL}' FAILED after "
-            f"{_attempt} attempt(s) (~{((_attempt - 1) * _BACKOFF_SECS) // 60} min of waiting): {_e}\n"
-            f"{_failure_guidance}"
-        ) from _e
-
-_completion = (
-    "tables written and Gold_SM refreshed"
-    if _refreshed and refresh_semantic_model
-    else "tables written and Gold_SM rebound"
-)
-print(f"🏆 Gold aggregation COMPLETE — {_completion}")
+      f"({_gold_lh_id}) in this workspace.")
+print("🏆 Gold aggregation COMPLETE — tables written and Gold_SM rebound")
 
 # METADATA ********************
 

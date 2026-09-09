@@ -5,12 +5,6 @@ on:
     branches:
       - main
   workflow_dispatch:
-    inputs:
-      recreate_analytics_items:
-        description: Recreate Gold_SM and Gold_Dashboard under the deployment SPN
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -52,15 +46,9 @@ jobs:
         run: python scripts/validate_repository.py
 
       - name: Deploy changed Fabric definitions
-        shell: bash
-        run: |
-          args=(
-            --target-workspace "${{ vars.FABRIC_PROD_WORKSPACE }}"
-            --dev-workspace "${{ vars.FABRIC_DEV_WORKSPACE }}"
-            --git-compare-ref "${{ github.event.before || 'HEAD~1' }}"
-            --environment Production
-          )
-          if [[ "${{ inputs.recreate_analytics_items }}" == "true" ]]; then
-            args+=(--recreate-analytics-items)
-          fi
-          python scripts/deploy_to_fabric.py "${args[@]}"
+        run: >-
+          python scripts/deploy_to_fabric.py
+          --target-workspace "${{ vars.FABRIC_PROD_WORKSPACE }}"
+          --dev-workspace "${{ vars.FABRIC_DEV_WORKSPACE }}"
+          --git-compare-ref "${{ github.event.before || 'HEAD~1' }}"
+          --environment Production
