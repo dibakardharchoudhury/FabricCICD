@@ -87,7 +87,9 @@ also be dispatched manually. Configure a GitHub `production` Environment with:
 
 Create an Entra federated credential for the repository's GitHub `production` Environment with
 audience `api://AzureADTokenExchange`. Do not create a client secret. Enable service-principal use
-of Fabric APIs and grant the deployment principal enough access to read Dev and publish to Prod.
+of Fabric APIs. Grant the deployment principal Viewer access to Dev and Member access to established
+targets. A completely new target requires Admin access for its first Workspace Identity provisioning;
+the deployer skips that admin-only call on later runs.
 
 The target Workspace Identity is the notebook runtime identity; it is separate from the GitHub OIDC
 deployment principal. The deployer grants its workspace role, creates the connection, and injects

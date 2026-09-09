@@ -158,6 +158,10 @@ class FabricApi:
     def ensure_workspace_identity(self, workspace_id: str) -> None:
         import requests
 
+        if self.get(f"/workspaces/{workspace_id}").get("workspaceIdentity"):
+            print(f"Workspace identity already exists for {workspace_id}")
+            return
+
         for attempt in range(1, 5):
             try:
                 self.post(f"/workspaces/{workspace_id}/provisionIdentity")
