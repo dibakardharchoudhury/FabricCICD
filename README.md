@@ -25,9 +25,9 @@ Gold_SM (Direct Lake) -> Gold_Dashboard
 3. `NB_03_Aggregate_Gold`
 
 NB03 writes the Gold tables and rebinds `Gold_SM` to the current workspace's `Gold_LH`. Pipeline
-runs pass `refresh_semantic_model=True`, so NB03 retains the Semantic Link
-`labs.refresh_semantic_model(...)` path. The notebooks run through a dynamically injected
-`Notebook.Actions` Workspace Identity connection.
+runs do not refresh the semantic model. The guarded Semantic Link refresh path remains in NB03 but
+is frozen with `refresh_semantic_model=False` because service-principal-triggered notebook runs
+cannot use that Semantic Link function without adding separate credentials.
 
 ## Repository layout
 
@@ -48,26 +48,21 @@ pipeline after deployment to create and populate its tables.
 
 The deployer resolves both workspace IDs by display name at runtime. It then:
 
-1. Provisions or reuses the target workspace identity.
-2. Grants that identity Contributor access to the target workspace if it has no existing role.
-3. Creates or reuses a `Notebook.Actions` connection backed by that identity.
-4. Discovers Fabric item folders from their `.platform` files.
-5. Removes generated Python cache files from Fabric item folders.
-6. Generates an ephemeral `parameter.yml`.
-7. Replaces the current-workspace placeholder with the target workspace ID.
-8. Replaces pipeline logical item IDs with target item IDs.
-9. Replaces the dedicated notebook-connection sentinel with the target connection ID.
-10. Replaces source Lakehouse IDs with target Lakehouse IDs.
-11. Publishes changed, missing, or environment-drifted items.
-12. Deletes only Fabric items whose `.platform` file was deleted in the compared Git range.
-13. Removes `parameter.yml` on process exit, including failed deployments.
+1. Discovers Fabric item folders from their `.platform` files.
+2. Removes generated Python cache files from Fabric item folders.
+3. Generates an ephemeral `parameter.yml`.
+4. Replaces the current-workspace placeholder with the target workspace ID.
+5. Replaces pipeline logical item IDs with target item IDs.
+6. Replaces source Lakehouse IDs with target Lakehouse IDs.
+7. Publishes changed, missing, or environment-drifted items.
+8. Deletes only Fabric items whose `.platform` file was deleted in the compared Git range.
+9. Removes `parameter.yml` on process exit, including failed deployments.
 
-The source placeholders have separate meanings and must stay distinct:
+The source references have separate meanings:
 
 | Source value | Meaning |
 | --- | --- |
 | `00000000-0000-0000-0000-000000000000` | Current workspace |
-| `11111111-1111-1111-1111-111111111111` | Notebook Workspace Identity connection |
 | `.platform` `config.logicalId` | Pipeline item reference |
 
 Do not replace these with live Production IDs. Runtime IDs belong only in the generated,
@@ -87,13 +82,9 @@ also be dispatched manually. Configure a GitHub `production` Environment with:
 
 Create an Entra federated credential for the repository's GitHub `production` Environment with
 audience `api://AzureADTokenExchange`. Do not create a client secret. Enable service-principal use
-of Fabric APIs. Grant the deployment principal Viewer access to Dev and Member access to established
-targets. A completely new target requires Admin access for its first Workspace Identity provisioning;
-the deployer skips that admin-only call on later runs.
-
-The target Workspace Identity is the notebook runtime identity; it is separate from the GitHub OIDC
-deployment principal. The deployer grants its workspace role, creates the connection, and injects
-the connection ID, so a new target does not require manual identity or connection setup.
+of Fabric APIs and grant the deployment principal Viewer access to Dev and Member access to Prod.
+The pipeline notebook activities use Fabric's normal execution context and have no external
+Notebook connection.
 
 ## Development flow
 
@@ -120,13 +111,32 @@ first deployment, run `PL_Refresh_Master` and verify:
 | `Silver_LH.dbo` | `production_conformed`, `cost_conformed`, `schedule_conformed` |
 | `Gold_LH.dbo` | `production_daily`, `cost_monthly`, `schedule_summary`, `field_kpi_facts` |
 
-The Workspace Identity path can execute all notebooks and rebind the Direct Lake model. However,
-Microsoft's default token service for service-principal-triggered notebooks supports only a subset
-of Semantic Link functions, and semantic-model refresh is not in that supported subset. The live
-Production run reached NB03 and received `403 Forbidden` from the Power BI refresh API. Microsoft's
-documented workaround requires manually authenticating Semantic Link with service-principal
-credentials. This repository intentionally does not add a client secret, certificate, Key Vault
-dependency, interactive OAuth connection, raw REST refresh, or token wrapping.
+After the pipeline succeeds, verify that NB03 completed the Direct Lake rebind and then refresh the
+semantic model separately.
+
+### Refresh Gold_SM manually
+
+1. Open the target Fabric workspace.
+2. Find `Gold_SM` and select its **Refresh** button, or open its context menu and select
+    **Refresh now**.
+3. Open the semantic model refresh history and confirm the refresh completed before validating
+    `Gold_Dashboard`.
+
+### Schedule Gold_SM in Production
+
+Production should normally use the semantic model's own refresh schedule instead of coupling model
+refresh to NB03:
+
+1. Open `Gold_SM` in the Production workspace and select **Settings**.
+2. Open **Refresh** or **Scheduled refresh**, enable the schedule, and set the time zone and desired
+    refresh times.
+3. Schedule the model after `PL_Refresh_Master` normally finishes, including a buffer for notebook
+    runtime and first-run table creation.
+4. Save the schedule and monitor both pipeline history and semantic model refresh history separately.
+
+This design keeps deployment credential-free and lets Fabric retry and monitor the data pipeline and
+semantic model as independent Production operations. The frozen Semantic Link code is retained only
+for future platform support or an explicitly approved authentication design.
 
 ## Troubleshooting
 
@@ -135,25 +145,13 @@ dependency, interactive OAuth connection, raw REST refresh, or token wrapping.
 Publish the `semanticlink` Environment and wait for its library build to finish. Git synchronization
 creates the Environment definition but does not build it.
 
-### Manual NB03 refresh uses the Fabric host for a Power BI path
+### Gold_SM is not current after the pipeline
 
-NB03 intentionally corrects the pinned SemPy client's default URL to `https://api.powerbi.com/`
-before importing Labs. Keep that workaround while the pinned runtime requires it.
-
-### Notebook activity reports a connection or identity error
-
-Rerun deployment. It idempotently provisions the target Workspace Identity, creates or reuses the
-named Notebook connection, grants Contributor access when needed, and injects the connection ID
-into all three activities. Do not edit the pipeline connections manually.
-
-### NB03 Semantic Link refresh returns 403
-
-The Direct Lake rebind has already completed when this error occurs. Semantic-model refresh is not
-supported by Semantic Link's default token service in a service-principal-triggered notebook. A
-workspace role alone cannot enable that unsupported function. Do not add a secret-based fallback
-unless the credential-free design requirement changes.
+This is expected because NB03 refresh is frozen. Use **Refresh now** for ad hoc validation or check
+the Production semantic model schedule and refresh history.
 
 ### First Direct Lake frame reports `0xC14700DF`
 
-New Delta tables can take several minutes to appear in OneLake metadata. NB03 retries the initial
-frame. If all retries fail, inspect the NB03 notebook diagnostics.
+New Delta tables can take several minutes to appear in OneLake metadata. If a manual or scheduled
+refresh fails immediately after first-time table creation, wait for metadata convergence and retry
+the semantic model refresh from its refresh history.

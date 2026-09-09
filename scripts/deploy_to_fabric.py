@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import atexit
-import base64
 import json
 import os
 from pathlib import Path
@@ -16,8 +15,6 @@ from typing import Any
 
 FABRIC_API = "https://api.fabric.microsoft.com/v1"
 FABRIC_SCOPE = "https://api.fabric.microsoft.com/.default"
-NOTEBOOK_CONNECTION_NAME = "FabricCICD Notebook Workspace Identity"
-CONNECTION_ID_PLACEHOLDER = "11111111-1111-1111-1111-111111111111"
 SUPPORTED_ITEM_TYPES = {
     "ApacheAirflowJob",
     "CopyJob",
@@ -156,138 +153,6 @@ class FabricApi:
             raise ValueError(f"{item_type} '{display_name}' was not found in workspace {workspace_id}")
         return match
 
-    def ensure_workspace_identity(self, workspace_id: str) -> None:
-        import requests
-
-        if self.get(f"/workspaces/{workspace_id}").get("workspaceIdentity"):
-            print(f"Workspace identity already exists for {workspace_id}")
-            return
-
-        for attempt in range(1, 5):
-            try:
-                self.post(f"/workspaces/{workspace_id}/provisionIdentity")
-                break
-            except requests.HTTPError as error:
-                response_body = error.response.json() if error.response.content else {}
-                if response_body.get("errorCode") == "WorkspaceIdentityAlreadyExists":
-                    break
-                if error.response.status_code not in {429, 500, 502, 503, 504} or attempt == 4:
-                    raise
-                time.sleep(2 ** (attempt - 1))
-        print(f"Workspace identity is provisioned for {workspace_id}")
-
-    def ensure_workspace_identity_role(self, workspace_id: str) -> None:
-        workspace = self.get(f"/workspaces/{workspace_id}")
-        identity = workspace.get("workspaceIdentity", {})
-        principal_id = identity.get("servicePrincipalId")
-        if not principal_id:
-            raise ValueError(f"Workspace {workspace_id} has no provisioned identity principal")
-
-        assignments = self.get(f"/workspaces/{workspace_id}/roleAssignments").get("value", [])
-        assignment = next(
-            (
-                item
-                for item in assignments
-                if item.get("principal", {}).get("id") == principal_id
-            ),
-            None,
-        )
-        if assignment:
-            print(
-                f"Workspace identity already has {assignment['role']} access to {workspace_id}"
-            )
-            return
-
-        self.post(
-            f"/workspaces/{workspace_id}/roleAssignments",
-            {
-                "principal": {"id": principal_id, "type": "ServicePrincipal"},
-                "role": "Contributor",
-            },
-        )
-        print(f"Granted Workspace Identity Contributor access to {workspace_id}")
-
-    def ensure_notebook_workspace_identity_connection(self, workspace_id: str) -> str:
-        connections = self.get("/connections").get("value", [])
-        named = [
-            connection
-            for connection in connections
-            if connection.get("displayName") == NOTEBOOK_CONNECTION_NAME
-        ]
-        for connection in named:
-            if (
-                connection.get("connectionDetails", {}).get("type") == "Notebook"
-                and connection.get("credentialDetails", {}).get("credentialType")
-                == "WorkspaceIdentity"
-            ):
-                print(
-                    f"Reusing Notebook Workspace Identity connection: "
-                    f"{NOTEBOOK_CONNECTION_NAME} ({connection['id']})"
-                )
-                return connection["id"]
-        if named:
-            raise ValueError(
-                f"Connection '{NOTEBOOK_CONNECTION_NAME}' exists with incompatible type or credentials"
-            )
-
-        try:
-            pipeline_id = self.resolve_item_id(
-                workspace_id, "PL_Refresh_Master", "DataPipeline"
-            )
-        except ValueError:
-            pipeline_id = None
-        if pipeline_id:
-            definition = self.post(
-                f"/workspaces/{workspace_id}/items/{pipeline_id}/getDefinition", {}
-            )
-            parts = definition.get("definition", {}).get("parts", [])
-            pipeline_part = next(
-                (part for part in parts if part.get("path") == "pipeline-content.json"),
-                None,
-            )
-            if pipeline_part:
-                pipeline = json.loads(base64.b64decode(pipeline_part["payload"]))
-                connection_ids = {
-                    activity.get("externalReferences", {}).get("connection")
-                    for activity in pipeline.get("properties", {}).get("activities", [])
-                    if activity.get("type") == "TridentNotebook"
-                }
-                connection_ids.discard(None)
-                connection_ids.discard(CONNECTION_ID_PLACEHOLDER)
-                if len(connection_ids) == 1:
-                    connection_id = connection_ids.pop()
-                    print(
-                        "Reusing Notebook Workspace Identity connection from deployed "
-                        f"PL_Refresh_Master: {connection_id}"
-                    )
-                    return connection_id
-
-        connection = self.post(
-            "/connections",
-            {
-                "connectivityType": "ShareableCloud",
-                "displayName": NOTEBOOK_CONNECTION_NAME,
-                "connectionDetails": {
-                    "type": "Notebook",
-                    "creationMethod": "Notebook.Actions",
-                    "parameters": [],
-                },
-                "privacyLevel": "Organizational",
-                "credentialDetails": {
-                    "singleSignOnType": "None",
-                    "connectionEncryption": "NotEncrypted",
-                    "skipTestConnection": False,
-                    "credentials": {"credentialType": "WorkspaceIdentity"},
-                },
-            },
-        )
-        connection_id = connection.get("id")
-        if not connection_id:
-            raise ValueError("Fabric created the Power BI connection without returning its ID")
-        print(f"Created Notebook Workspace Identity connection: {connection_id}")
-        return connection_id
-
-
 def discover_items(repository_directory: Path) -> list[tuple[str, str, Path]]:
     items: list[tuple[str, str, Path]] = []
     for root, directories, _files in os.walk(repository_directory):
@@ -397,7 +262,6 @@ def generate_parameters(
     dev_workspace_id: str,
     environment: str,
     api: FabricApi,
-    notebook_connection_id: str,
 ) -> None:
     import yaml
 
@@ -416,14 +280,6 @@ def generate_parameters(
         "replace_value": replacement("$workspace.$id"),
     }
     rules.append(workspace_rule)
-    rules.append(
-        {
-            "find_value": CONNECTION_ID_PLACEHOLDER,
-            "replace_value": replacement(notebook_connection_id),
-            "item_type": ["DataPipeline"],
-        }
-    )
-
     for item_type, display_name, item_path in repository_items:
         if item_type in {"Notebook", "Dataflow", "SemanticModel"}:
             platform = json.loads((item_path / ".platform").read_text(encoding="utf-8-sig"))
@@ -511,11 +367,6 @@ def main() -> None:
     target_workspace_id = api.resolve_workspace_id(args.target_workspace)
     print(f"Dev workspace: {args.dev_workspace} ({dev_workspace_id})")
     print(f"Target workspace: {args.target_workspace} ({target_workspace_id})")
-    api.ensure_workspace_identity(target_workspace_id)
-    api.ensure_workspace_identity_role(target_workspace_id)
-    notebook_connection_id = api.ensure_notebook_workspace_identity_connection(
-        target_workspace_id
-    )
     repository_items = discover_items(repository_directory)
     remove_generated_item_artifacts(repository_items)
     item_types = sorted(
@@ -532,7 +383,6 @@ def main() -> None:
         dev_workspace_id,
         args.environment,
         api,
-        notebook_connection_id,
     )
     workspace = FabricWorkspace(
         workspace_id=target_workspace_id,

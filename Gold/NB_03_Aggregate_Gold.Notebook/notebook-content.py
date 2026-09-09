@@ -29,7 +29,7 @@
 
 # PARAMETERS CELL ********************
 
-refresh_semantic_model = True
+refresh_semantic_model = False
 
 # METADATA ********************
 

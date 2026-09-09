@@ -23,7 +23,6 @@ EXPECTED_PIPELINE = (
     ("NB_Transform_Silver", "NB_02_Transform_Silver", "NB_Seed_Bronze"),
     ("NB_Aggregate_GOLD", "NB_03_Aggregate_Gold", "NB_Transform_Silver"),
 )
-CONNECTION_ID_PLACEHOLDER = "11111111-1111-1111-1111-111111111111"
 EXPECTED_GOLD_SNIPPETS = {
     'spark.table("Silver_LH.dbo.production_conformed")',
     '.groupBy("date", "field")',
@@ -36,7 +35,7 @@ EXPECTED_GOLD_SNIPPETS = {
     "labs.refresh_semantic_model(",
     'dataset=_SEMANTIC_MODEL, workspace=_ws_id, refresh_type="full"',
     "# PARAMETERS CELL ********************",
-    "refresh_semantic_model = True",
+    "refresh_semantic_model = False",
 }
 EXPECTED_ENVIRONMENT_PIP = {
     "fabric-cicd==1.3.0",
@@ -167,9 +166,9 @@ def main() -> None:
                 failures.append(
                     f"{pipeline_path.relative_to(ROOT)}: {expected_name} must use Fabric's current-workspace placeholder"
                 )
-            if activity.get("externalReferences", {}).get("connection") != CONNECTION_ID_PLACEHOLDER:
+            if "externalReferences" in activity:
                 failures.append(
-                    f"{pipeline_path.relative_to(ROOT)}: {expected_name} must use the deploy-time Notebook connection"
+                    f"{pipeline_path.relative_to(ROOT)}: {expected_name} must not use an external Notebook connection"
                 )
             dependencies = activity.get("dependsOn", [])
             actual_dependency = dependencies[0].get("activity") if len(dependencies) == 1 else None
@@ -179,9 +178,9 @@ def main() -> None:
                 )
 
         aggregate_parameters = activities[2].get("typeProperties", {}).get("parameters", {})
-        if aggregate_parameters.get("refresh_semantic_model") != {"value": True, "type": "bool"}:
+        if "refresh_semantic_model" in aggregate_parameters:
             failures.append(
-                f"{pipeline_path.relative_to(ROOT)}: NB_Aggregate_GOLD must run the Semantic Link refresh"
+                f"{pipeline_path.relative_to(ROOT)}: NB_Aggregate_GOLD must not run the Semantic Link refresh"
             )
 
     gold_path = ROOT / "Gold" / "NB_03_Aggregate_Gold.Notebook" / "notebook-content.py"
