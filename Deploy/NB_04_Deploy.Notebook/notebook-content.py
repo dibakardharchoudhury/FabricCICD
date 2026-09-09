@@ -44,7 +44,7 @@ rebind_direct_lake     = True
 # GitHub Actions publishes every other supported item type through OIDC. Pipelines are
 # intentionally deferred to this interactive notebook so Fabric records the user as publisher.
 publish_item_types     = {"DataPipeline"}
-required_publisher_name = "System admin"
+required_publisher_upn = "admin@mngenvmcap218279.onmicrosoft.com"
 
 # Repository discovery intersects this fabric-cicd allow-list.
 _supported_item_types = [
@@ -112,6 +112,10 @@ _publisher_token = notebookutils.credentials.getToken("https://api.fabric.micros
 _publisher_claims = _jwt_claims(_publisher_token)
 _publisher_name = _publisher_claims.get("name", "")
 _user_claims = ("preferred_username", "upn", "unique_name", "email")
+_publisher_upn = next(
+    (_publisher_claims.get(claim) for claim in _user_claims if _publisher_claims.get(claim)),
+    "",
+)
 _is_app_token = (
     str(_publisher_claims.get("idtyp", "")).lower() == "app"
     or ("roles" in _publisher_claims
@@ -120,12 +124,12 @@ _is_app_token = (
 )
 if _is_app_token:
     raise RuntimeError("NB_04 pipeline publication requires an interactive user token; app/SPN tokens are rejected.")
-if required_publisher_name and _publisher_name.casefold() != required_publisher_name.casefold():
+if required_publisher_upn and _publisher_upn.casefold() != required_publisher_upn.casefold():
     raise RuntimeError(
-        f"NB_04 must be run by '{required_publisher_name}', but the current token belongs to "
-        f"'{_publisher_name or '(name claim missing)'}'."
+        f"NB_04 must be run by '{required_publisher_upn}', but the current token belongs to "
+        f"'{_publisher_upn or '(UPN claim missing)'}'."
     )
-_say(f"Pipeline publisher verified: <b>{_publisher_name}</b> (delegated user token).", "ok")
+_say(f"Pipeline publisher verified: <b>{_publisher_name}</b> (<code>{_publisher_upn}</code>).", "ok")
 
 credential = NotebookUtilsCredential()
 

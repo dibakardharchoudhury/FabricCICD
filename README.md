@@ -276,7 +276,7 @@ items → run `NB_04_Deploy` interactively as System admin to publish the pipeli
 | `dev_workspace_name` | `ws-FabricCICD-DEV` | Source workspace (GUIDs → tokens) |
 | `generate_parameter_yml` | `True` | Auto-build `parameter.yml` from the repo |
 | `publish_item_types` | `{DataPipeline}` | Keep pipeline publication in the interactive user context |
-| `required_publisher_name` | `System admin` | Fail unless NB04 has that delegated user token; app/SPN tokens are rejected |
+| `required_publisher_upn` | `admin@mngenvmcap218279.onmicrosoft.com` | Require the System Administrator delegated token; app/SPN tokens are rejected |
 | `rebind_direct_lake` | `True` | Used only when `SemanticModel` is included in the publication scope |
 | `include_lakehouses` | `True` | Used only when `Lakehouse` is included in the publication scope |
 | `remove_orphans` | `False` | Delete target items no longer in Git |
