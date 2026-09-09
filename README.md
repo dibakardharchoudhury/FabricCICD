@@ -395,3 +395,11 @@ on the Spark pool. This happens when the Environment arrived via **Git sync** (G
 definition but doesn't build it) — typically the Dev workspace. Fix: **`semanticlink` → Publish**
 (~10–20 min), then re-run `PL_Refresh_Master`. Re-publish only when libraries change.
 Automated target deployment publishes changed Environment definitions and waits for completion.
+
+### Pipeline refresh calls `api.fabric.microsoft.com/v1.0/myorg/.../refreshes`
+
+The pinned SemPy runtime defaults a fresh pipeline session's `PowerBIRestClient` to the Fabric API
+host, while `semantic-link-labs` supplies a Power BI `/v1.0/myorg/.../refreshes` path. `NB_03`
+overrides the client's default-URL resolver to return `https://api.powerbi.com/` before importing
+Labs, then keeps using `labs.refresh_semantic_model`. Interactive sessions may not reproduce this
+because an existing SemPy client can already have the Power BI base URL cached.

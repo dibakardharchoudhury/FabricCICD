@@ -164,6 +164,13 @@ print(f"✅ Gold_LH.field_kpi_facts: {df_kpi_facts.count()} rows")
 # CELL ********************
 
 # Cell 6 — Validate Gold and refresh the Direct Lake model
+from sempy.fabric._client._rest_client import PowerBIRestClient
+
+def _powerbi_base_url(self):
+    return "https://api.powerbi.com/"
+
+PowerBIRestClient._get_default_base_url = _powerbi_base_url
+
 import sempy_labs as labs
 from sempy_labs import directlake
 import notebookutils
@@ -197,6 +204,7 @@ print(f"🔗 '{_SEMANTIC_MODEL}' Direct Lake connection re-pointed to '{_GOLD_LA
       f"({_gold_lh_id}) in this workspace before refresh.")
 
 print(f"\n── Refreshing Direct Lake (on OneLake) model '{_SEMANTIC_MODEL}' (full reframe) ──")
+print(f"Semantic Link Power BI endpoint: {PowerBIRestClient().default_base_url}")
 _refreshed = False
 for _attempt in range(1, _MAX_ATTEMPTS + 1):
     try:

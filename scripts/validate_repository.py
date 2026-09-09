@@ -31,6 +31,7 @@ EXPECTED_GOLD_SNIPPETS = {
     '_write_gold(df_gold_sched, "schedule_summary")',
     '_write_gold(df_kpi_facts, "field_kpi_facts")',
     "directlake.update_direct_lake_model_connection(",
+    "PowerBIRestClient._get_default_base_url = _powerbi_base_url",
     "labs.refresh_semantic_model(",
     'dataset=_SEMANTIC_MODEL, workspace=_ws_id, refresh_type="full"',
 }
