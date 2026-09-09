@@ -364,7 +364,7 @@ display(HTML(
     f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">Target workspace</td><td><b>{target_workspace_name}</b></td></tr>'
     f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">Environment</td><td><b>{environment}</b></td></tr>'
     f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">Items in scope</td><td>{_items_summary}</td></tr>'
-    f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">Pipeline refs</td><td>notebooks / dataflows re-pointed to this stage</td></tr>'
+    f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">Pipeline refs</td><td>notebooks re-pointed to this stage</td></tr>'
     f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">parameter.yml</td><td>{_param_summary}</td></tr>'
     f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">Direct Lake</td><td>{_dl_summary}</td></tr>'
     f'<tr><td style="padding:2px 14px 2px 0;color:#57606a">Lakehouses</td><td>deployed from repo (paired by logical id; updated only on change)</td></tr>'
