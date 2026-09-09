@@ -417,8 +417,16 @@ def main() -> None:
         print(f"Publishing administrator-owned items as {ADMIN_UPN}: " + ", ".join(admin_items))
         publish_all_items(workspace, items_to_include=admin_items)
     elif args.full_deploy:
-        print("Full deployment requested")
-        publish_all_items(workspace)
+        append_feature_flag("enable_experimental_features")
+        append_feature_flag("enable_items_to_include")
+        reconciliation_items = sorted(
+            f"{name}.{item_type}" for item_type, name, _path in repository_items
+        )
+        print(
+            "Full reconciliation requested; publishing all dynamically discovered ordinary items: "
+            + ", ".join(reconciliation_items)
+        )
+        publish_all_items(workspace, items_to_include=reconciliation_items)
     else:
         items_to_publish = select_items_to_publish(
             repository_items,

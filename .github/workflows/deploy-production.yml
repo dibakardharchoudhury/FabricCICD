@@ -51,4 +51,5 @@ jobs:
           --target-workspace "${{ vars.FABRIC_PROD_WORKSPACE }}"
           --dev-workspace "${{ vars.FABRIC_DEV_WORKSPACE }}"
           --git-compare-ref "${{ github.event.before || 'HEAD~1' }}"
+          ${{ github.event_name == 'workflow_dispatch' && '--full-deploy' || '' }}
           --environment Production

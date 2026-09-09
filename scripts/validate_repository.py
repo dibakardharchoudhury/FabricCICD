@@ -224,6 +224,20 @@ def main() -> None:
     ):
         if excluded_item not in deploy_source:
             failures.append(f"{deploy_path.relative_to(ROOT)}: missing deployment exclusion {excluded_item}")
+    if "publish_all_items(workspace, items_to_include=reconciliation_items)" not in deploy_source:
+        failures.append(
+            f"{deploy_path.relative_to(ROOT)}: full reconciliation must preserve item exclusions"
+        )
+
+    production_workflow_path = ROOT / ".github" / "workflows" / "deploy-production.yml"
+    production_workflow_source = production_workflow_path.read_text(encoding="utf-8-sig")
+    manual_reconciliation = (
+        "${{ github.event_name == 'workflow_dispatch' && '--full-deploy' || '' }}"
+    )
+    if manual_reconciliation not in production_workflow_source:
+        failures.append(
+            f"{production_workflow_path.relative_to(ROOT)}: manual runs must request full reconciliation"
+        )
 
     refresh_path = ROOT / "Gold" / f"{REFRESH_NOTEBOOK}.Notebook" / "notebook-content.py"
     refresh_source = refresh_path.read_text(encoding="utf-8-sig")

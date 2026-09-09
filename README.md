@@ -87,7 +87,11 @@ untracked `parameter.yml`.
 ## GitHub configuration
 
 The [production workflow](.github/workflows/deploy-production.yml) runs on pushes to `main` and can
-also be dispatched manually. Configure a GitHub `production` Environment with:
+also be dispatched manually. Push runs publish the Git delta plus missing or environment-drifted
+items. Manual runs perform a full reconciliation by dynamically discovering and publishing every
+ordinary repository item, which repairs older missed changes without hardcoded item lists. Both
+modes exclude NB04 and `PL_SemanticModel_Rebind_Refresh` so OIDC cannot replace their administrator
+ownership. Configure a GitHub `production` Environment with:
 
 | Variable | Purpose |
 | --- | --- |
@@ -114,7 +118,9 @@ Notebook connection.
 8. Publish the two protected refresh items with `--admin-owned-only`, then run
     `PL_SemanticModel_Rebind_Refresh` and verify it completes.
 
-Use `--full-deploy` only for a complete bootstrap or recovery.
+Use `--full-deploy` for a complete bootstrap or recovery. It dynamically discovers all repository
+items but still excludes the two administrator-owned refresh artifacts; publish those separately
+with `--admin-owned-only`.
 
 ## Fresh workspace validation
 
