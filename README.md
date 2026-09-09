@@ -258,14 +258,14 @@ context; an interactive test under a different user does not validate the pipeli
 ## What NB_04 does
 
 **Discovers** every production item outside `Deploy/` and resolves its Dev GUIDs by name → **generates `parameter.yml`** so
-fabric-cicd rewrites each Dev workspace/lakehouse/item GUID to the target → **publishes** all items
-and **rebinds** the Direct Lake model in code. Nothing is hardcoded; add an item and it's picked up
-automatically.
+fabric-cicd rewrites each Dev workspace/item GUID to the target → **publishes DataPipeline items only**
+with the interactive notebook user's Fabric token. GitHub Actions publishes the remaining supported
+item types through OIDC.
 
 ## Change loop
 
-Edit in **Dev** → **commit from Fabric** → merge to `main` → GitHub deploys only affected items.
-Use `NB_04_Deploy` for a manual in-Fabric deployment.
+Edit in **Dev** → **commit from Fabric** → merge to `main` → GitHub deploys affected non-pipeline
+items → run `NB_04_Deploy` interactively as System admin to publish the pipeline.
 
 ## Key NB_04 parameters
 
@@ -275,8 +275,10 @@ Use `NB_04_Deploy` for a manual in-Fabric deployment.
 | `environment` | `Production` | Stage label used by `parameter.yml` |
 | `dev_workspace_name` | `ws-FabricCICD-DEV` | Source workspace (GUIDs → tokens) |
 | `generate_parameter_yml` | `True` | Auto-build `parameter.yml` from the repo |
-| `rebind_direct_lake` | `True` | Re-point Direct Lake models to the target lakehouse |
-| `include_lakehouses` | `True` | Deploy lakehouses from the repo |
+| `publish_item_types` | `{DataPipeline}` | Keep pipeline publication in the interactive user context |
+| `required_publisher_name` | `System admin` | Fail unless NB04 has that delegated user token; app/SPN tokens are rejected |
+| `rebind_direct_lake` | `True` | Used only when `SemanticModel` is included in the publication scope |
+| `include_lakehouses` | `True` | Used only when `Lakehouse` is included in the publication scope |
 | `remove_orphans` | `False` | Delete target items no longer in Git |
 
 ## Good to know
@@ -324,7 +326,9 @@ The [production workflow](.github/workflows/deploy-production.yml) runs on every
 `main`, so Fabric items can use any valid root folder name without maintaining path filters. It
 checks out the approved commit, signs in without a client secret by using GitHub OIDC, installs the
 pinned dependencies on the temporary runner, validates the source, and deploys only changed,
-missing, or environment-drifted items to Prod. When a commit deletes an item's `.platform` file,
+missing, or environment-drifted non-pipeline items to Prod. DataPipeline items are excluded from
+OIDC publication and deletion; after the workflow succeeds, run `NB_04_Deploy` interactively as
+System admin to publish `PL_Refresh_Master`. When a commit deletes an included item's `.platform` file,
 the same run deletes only that matching Prod item; unrelated Fabric-managed items are preserved.
 The workflow excludes the entire `Deploy/` subtree and removes any existing deployment notebook
 from Prod. `NB_04_Deploy` applies the same rule when it performs a manual deployment.
@@ -393,8 +397,8 @@ Configure it once:
 
 GitHub Actions does **not** run `NB_04`, clone with the Key Vault PAT, or use the Fabric workspace's
 Key Vault managed private endpoint. GitHub checks out the repository with its built-in token and the
-deployment script authenticates to Fabric through OIDC. `NB_04` remains available for manual,
-in-Fabric deployment.
+deployment script authenticates to Fabric through OIDC. The workflow deliberately excludes
+`DataPipeline`; `NB_04` is the manual, in-Fabric user-context publication step for that item type.
 
 Notebook runtime identity is configured on each activity under **Settings → Connection**; changing
 pipeline or item ownership is not a substitute for an explicit Notebook activity connection.
@@ -407,7 +411,7 @@ without deliberately adding a credential. Do not substitute the pipeline's `Last
 ### What "only changed items" means
 
 The workflow compares the pushed commit with the push event's previous commit and passes only changed
-Fabric item folders to `publish_all_items()`. It also includes repository items missing from Prod, so
+non-pipeline Fabric item folders to `publish_all_items()`. It also includes included repository items missing from Prod, so
 the same command can bootstrap newly added items. Semantic models whose deployed connection still
 contains the Dev workspace ID are included as environment drift and repaired even when their Git
 folder did not change. Use `--full-deploy` only for a deliberate complete bootstrap or recovery.

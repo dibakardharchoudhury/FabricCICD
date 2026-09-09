@@ -18,7 +18,7 @@
 
 
 
-# Deploys Fabric Git source items and applies stage-specific bindings.
+# Publishes Fabric data pipelines with the interactive notebook user's identity.
 
 # Cell 1 — Parameters
 target_workspace_name = "ws-FabricCICD-PROD"      # the stage to deploy INTO
@@ -40,6 +40,11 @@ dev_workspace_name     = "ws-FabricCICD-DEV"     # SOURCE stage; its GUIDs becom
 
 # Rebind Direct Lake models after publication.
 rebind_direct_lake     = True
+
+# GitHub Actions publishes every other supported item type through OIDC. Pipelines are
+# intentionally deferred to this interactive notebook so Fabric records the user as publisher.
+publish_item_types     = {"DataPipeline"}
+required_publisher_name = "System admin"
 
 # Repository discovery intersects this fabric-cicd allow-list.
 _supported_item_types = [
@@ -87,6 +92,11 @@ def _jwt_exp(tok):
     payload += "=" * (-len(payload) % 4)        # pad to a multiple of 4 for base64
     return int(json.loads(base64.urlsafe_b64decode(payload)).get("exp", time.time() + 3600))
 
+def _jwt_claims(tok):
+    payload = tok.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload))
+
 class NotebookUtilsCredential:
     """Expose notebookutils tokens through azure-core's TokenCredential interface."""
     def get_token(self, *scopes, **kwargs):
@@ -97,6 +107,25 @@ class NotebookUtilsCredential:
         except Exception:
             tok = notebookutils.credentials.getToken("pbi")
         return AccessToken(tok, _jwt_exp(tok))
+
+_publisher_token = notebookutils.credentials.getToken("https://api.fabric.microsoft.com")
+_publisher_claims = _jwt_claims(_publisher_token)
+_publisher_name = _publisher_claims.get("name", "")
+_user_claims = ("preferred_username", "upn", "unique_name", "email")
+_is_app_token = (
+    str(_publisher_claims.get("idtyp", "")).lower() == "app"
+    or ("roles" in _publisher_claims
+        and "scp" not in _publisher_claims
+        and not any(_publisher_claims.get(claim) for claim in _user_claims))
+)
+if _is_app_token:
+    raise RuntimeError("NB_04 pipeline publication requires an interactive user token; app/SPN tokens are rejected.")
+if required_publisher_name and _publisher_name.casefold() != required_publisher_name.casefold():
+    raise RuntimeError(
+        f"NB_04 must be run by '{required_publisher_name}', but the current token belongs to "
+        f"'{_publisher_name or '(name claim missing)'}'."
+    )
+_say(f"Pipeline publisher verified: <b>{_publisher_name}</b> (delegated user token).", "ok")
 
 credential = NotebookUtilsCredential()
 
@@ -204,12 +233,15 @@ def _discover_repo_items(repo_dir):
     return found
 
 _repo_item_dirs = _discover_repo_items(repo_directory)
-item_type_in_scope = sorted({item_type for item_type, _name, _path in _repo_item_dirs})
+item_type_in_scope = sorted(
+    {item_type for item_type, _name, _path in _repo_item_dirs}
+    & publish_item_types
+)
 # Apply deployment toggles and exclude the unused Variable Library.
 if not include_lakehouses:
     item_type_in_scope = [t for t in item_type_in_scope if t != "Lakehouse"]
 item_type_in_scope = [t for t in item_type_in_scope if t != "VariableLibrary"]
-_say(f"Discovered <b>{len(item_type_in_scope)}</b> item type(s) in the repo → publishing "
+_say(f"Selected <b>{len(item_type_in_scope)}</b> user-context item type(s) → publishing "
      f"<code>{', '.join(item_type_in_scope) or '(none)'}</code>.", "info")
 
 def resolve_item_id(ws_id, display_name, item_type):
@@ -277,7 +309,7 @@ else:
     _say("parameter.yml generation skipped (generate_parameter_yml=False) — using the "
          "checked-in file.", "info")
 
-# Cell 5 — Publish in-scope items
+# Cell 5 — Publish pipelines under the interactive user's Fabric token
 target = FabricWorkspace(
     workspace_id=target_workspace_id,
     repository_directory=repo_directory,
@@ -305,7 +337,7 @@ else:
     _say("Orphan cleanup skipped (remove_orphans=False).", "info")
 
 # Cell 6b — Rebind Direct Lake models to target lakehouses
-if rebind_direct_lake:
+if rebind_direct_lake and "SemanticModel" in item_type_in_scope:
     import re, glob
     from sempy_labs import directlake
 
@@ -346,7 +378,7 @@ if rebind_direct_lake:
     else:
         _say("No Direct-Lake-on-OneLake semantic models found in the repo to rebind.", "info")
 else:
-    _say("Direct Lake rebind skipped (rebind_direct_lake=False).", "info")
+    _say("Direct Lake rebind skipped (SemanticModel is not in this notebook's publication scope).", "info")
 
 # Cell 7 — Summary and temporary clone cleanup
 if _clone_dir:
@@ -354,7 +386,9 @@ if _clone_dir:
 # Precompute summary cells as plain strings — Fabric's Python (<3.12) forbids a backslash
 # inside an f-string expression, so no apostrophes/escapes may appear in the {...} parts below.
 _param_summary = "generated from name resolution" if generate_parameter_yml else "checked-in file used as-is"
-_dl_summary    = "models re-pointed to this stage's lakehouse" if rebind_direct_lake else "left as published (rebind off)"
+_dl_summary    = ("models re-pointed to this stage's lakehouse"
+                  if rebind_direct_lake and "SemanticModel" in item_type_in_scope
+                  else "unchanged (SemanticModel not in publication scope)")
 _items_summary = ", ".join(item_type_in_scope)
 display(HTML(
     '<div style="font-family:Segoe UI,system-ui,sans-serif;border:1px solid #d0d7de;'

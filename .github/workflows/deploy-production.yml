@@ -52,5 +52,11 @@ jobs:
           --dev-workspace "${{ vars.FABRIC_DEV_WORKSPACE }}"
           --git-compare-ref "${{ github.event.before || 'HEAD~1' }}"
           --exclude-directory Deploy
+          --exclude-item-type DataPipeline
           --delete-excluded-items
           --environment Production
+
+      - name: Record pipeline publication requirement
+        run: >-
+          echo "DataPipeline definitions are intentionally excluded from OIDC deployment.
+          Run NB_04_Deploy interactively as System admin to publish PL_Refresh_Master."
