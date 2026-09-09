@@ -2,7 +2,8 @@
 
 A Bronze → Silver → Gold lakehouse promoted between Fabric workspaces **entirely from code**
 with [fabric-cicd](https://microsoft.github.io/fabric-cicd/). One notebook — `NB_04_Deploy` —
-publishes every repo item into a target workspace and rebinds all cross-workspace references.
+publishes the production item definitions into a target workspace and rebinds all cross-workspace
+references. The `Deploy/` subtree itself stays in Dev.
 No Fabric Deployment Pipeline is required; Dataflow credentials still require a one-time sign-in
 in each workspace.
 
@@ -27,7 +28,7 @@ uses its separately configured connection credential.
 | `Bronze/` | `Bronze_LH` and `NB_01_Seed_Bronze` |
 | `Silver/` | `Silver_LH` and `NB_02_Transform_Silver` |
 | `Gold/` | `Gold_LH`, `DF_Gold_PA`, `NB_03`, pipeline, model, and report |
-| `Deploy/NB_04_Deploy.Notebook/` | **Deploy tool** — publishes everything to a stage |
+| `Deploy/NB_04_Deploy.Notebook/` | **Dev-only deploy tool** — excluded from target stages |
 | `semanticlink.Environment/` | Spark env (`fabric-cicd`, `semantic-link-labs`) |
 
 Items are in **Fabric Git source format** — produced when you Git-connect a workspace and
@@ -253,7 +254,7 @@ context; an interactive test under a different user does not validate the pipeli
 
 ## What NB_04 does
 
-**Discovers** every repo item and resolves its Dev GUIDs by name → **generates `parameter.yml`** so
+**Discovers** every production item outside `Deploy/` and resolves its Dev GUIDs by name → **generates `parameter.yml`** so
 fabric-cicd rewrites each Dev workspace/lakehouse/item GUID to the target → **publishes** all items
 and **rebinds** the Direct Lake model in code. Nothing is hardcoded; add an item and it's picked up
 automatically.
@@ -322,6 +323,8 @@ checks out the approved commit, signs in without a client secret by using GitHub
 pinned dependencies on the temporary runner, validates the source, and deploys only changed,
 missing, or environment-drifted items to Prod. When a commit deletes an item's `.platform` file,
 the same run deletes only that matching Prod item; unrelated Fabric-managed items are preserved.
+The workflow excludes the entire `Deploy/` subtree and removes any existing deployment notebook
+from Prod. `NB_04_Deploy` applies the same rule when it performs a manual deployment.
 
 Configure it once:
 

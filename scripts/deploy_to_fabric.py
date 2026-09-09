@@ -12,7 +12,7 @@ from typing import Any
 
 FABRIC_API = "https://api.fabric.microsoft.com/v1"
 FABRIC_SCOPE = "https://api.fabric.microsoft.com/.default"
-EXCLUDED_ITEM_NAMES = {"NB_04_Deploy_NOTSECURE"}
+EXCLUDED_ITEM_NAMES = {"NB_04_Deploy", "NB_04_Deploy_NOTSECURE"}
 SUPPORTED_ITEM_TYPES = {
     "ApacheAirflowJob",
     "CopyJob",
@@ -48,6 +48,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--environment", default="Production")
     parser.add_argument("--repository-directory", default=".")
     parser.add_argument("--git-compare-ref", default="HEAD~1")
+    parser.add_argument("--exclude-directory", action="append", default=[])
+    parser.add_argument("--delete-excluded-items", action="store_true")
     parser.add_argument("--full-deploy", action="store_true")
     parser.add_argument("--remove-orphans", action="store_true")
     return parser.parse_args()
@@ -113,16 +115,27 @@ class FabricApi:
         return match
 
 
-def discover_items(repository_directory: Path) -> list[tuple[str, str, Path]]:
+def discover_items(
+    repository_directory: Path,
+    excluded_directories: set[str] | None = None,
+) -> list[tuple[str, str, Path]]:
+    excluded_directories = excluded_directories or set()
     items: list[tuple[str, str, Path]] = []
     for root, directories, _files in os.walk(repository_directory):
-        directories[:] = [name for name in directories if name != ".git" and not name.startswith(".")]
+        directories[:] = [
+            name
+            for name in directories
+            if name != ".git"
+            and not name.startswith(".")
+            and name not in excluded_directories
+        ]
         item_directories: list[str] = []
         for directory in directories:
             display_name, separator, item_type = directory.rpartition(".")
             if (
                 separator
                 and item_type in SUPPORTED_ITEM_TYPES
+                and (Path(root) / directory / ".platform").is_file()
                 and display_name not in EXCLUDED_ITEM_NAMES
             ):
                 items.append((item_type, display_name, Path(root, directory)))
@@ -182,6 +195,17 @@ def delete_removed_items(
             continue
         api.delete(f"/workspaces/{target_workspace_id}/items/{item_id}")
         print(f"Deleted Git-removed item: {display_name}.{item_type} ({item_id})")
+
+
+def delete_excluded_items(target_workspace_id: str, api: FabricApi) -> None:
+    target_items = api.get(f"/workspaces/{target_workspace_id}/items").get("value", [])
+    for item in target_items:
+        if item["displayName"] not in EXCLUDED_ITEM_NAMES:
+            continue
+        api.delete(f"/workspaces/{target_workspace_id}/items/{item['id']}")
+        print(
+            f"Deleted excluded item: {item['displayName']}.{item['type']} ({item['id']})"
+        )
 
 
 def generate_parameters(
@@ -301,7 +325,8 @@ def main() -> None:
     target_workspace_id = api.resolve_workspace_id(args.target_workspace)
     print(f"Dev workspace: {args.dev_workspace} ({dev_workspace_id})")
     print(f"Target workspace: {args.target_workspace} ({target_workspace_id})")
-    repository_items = discover_items(repository_directory)
+    excluded_directories = set(args.exclude_directory)
+    repository_items = discover_items(repository_directory, excluded_directories)
     item_types = sorted(
         {item_type for item_type, _name, _path in repository_items if item_type != "VariableLibrary"}
     )
@@ -324,9 +349,13 @@ def main() -> None:
     )
     print(f"Comparing {len(repository_items)} source items with {args.target_workspace}")
     print("Excluded item names: " + ", ".join(sorted(EXCLUDED_ITEM_NAMES)))
+    print("Excluded directories: " + (", ".join(sorted(excluded_directories)) or "(none)"))
     if args.full_deploy:
         print("Full deployment requested")
-        publish_all_items(workspace, item_name_exclude_regex=r"^NB_04_Deploy_NOTSECURE$")
+        publish_all_items(
+            workspace,
+            item_name_exclude_regex=r"^NB_04_Deploy(?:_NOTSECURE)?$",
+        )
     else:
         items_to_publish = select_items_to_publish(
             repository_items,
@@ -349,6 +378,8 @@ def main() -> None:
         target_workspace_id,
         api,
     )
+    if args.delete_excluded_items:
+        delete_excluded_items(target_workspace_id, api)
     if args.remove_orphans:
         unpublish_all_orphan_items(workspace)
     print(f"Deployment to {args.target_workspace} completed")

@@ -52,8 +52,10 @@ _supported_item_types = [
 
 include_lakehouses = True
 
-# Never publish the insecure local deployment notebook.
-exclude_item_name_regex = r"^NB_04_Deploy_NOTSECURE$"
+# Deployment tools stay in Dev and are removed from deployment targets.
+exclude_repository_directories = {"Deploy"}
+exclude_item_names = {"NB_04_Deploy", "NB_04_Deploy_NOTSECURE"}
+exclude_item_name_regex = r"^NB_04_Deploy(?:_NOTSECURE)?$"
 
 # Remove items in the target workspace that are no longer in Git (orphans). Leave False
 # until you trust the deploy; True keeps the workspace exactly mirroring the repo.
@@ -107,6 +109,13 @@ def _fabric_get(path):
     r = requests.get(f"{_FABRIC_BASE}{path}", headers={"Authorization": f"Bearer {token}"})
     r.raise_for_status()
     return r.json()
+
+def _fabric_delete(path):
+    token = notebookutils.credentials.getToken("https://api.fabric.microsoft.com")
+    import requests
+    r = requests.delete(f"{_FABRIC_BASE}{path}", headers={"Authorization": f"Bearer {token}"})
+    if r.status_code != 404:
+        r.raise_for_status()
 
 def resolve_workspace_id(name):
     wss = _fabric_get("/workspaces")["value"]
@@ -178,11 +187,17 @@ import yaml
 def _discover_repo_items(repo_dir):
     found = []
     for root, dirs, _files in os.walk(repo_dir):
-        dirs[:] = [d for d in dirs if d != ".git" and not d.startswith(".")]
+        dirs[:] = [
+            d for d in dirs
+            if d != ".git"
+            and not d.startswith(".")
+            and d not in exclude_repository_directories
+        ]
         item_dirs = []
         for dirname in dirs:
             display_name, separator, item_type = dirname.rpartition(".")
-            if separator and item_type in _supported_item_types:
+            if (separator and item_type in _supported_item_types
+                    and os.path.isfile(os.path.join(root, dirname, ".platform"))):
                 found.append((item_type, display_name, os.path.join(root, dirname)))
                 item_dirs.append(dirname)
         dirs[:] = [d for d in dirs if d not in item_dirs]
@@ -276,6 +291,11 @@ _say(f"Published all in-scope items into <b>{target_workspace_name}</b> "
      f"(env=<b>{environment}</b>)"
      + (f"; skipped names matching <code>{exclude_item_name_regex}</code>" if exclude_item_name_regex else "")
      + ".", "ok")
+
+for _item in _fabric_get(f"/workspaces/{target_workspace_id}/items").get("value", []):
+    if _item["displayName"] in exclude_item_names:
+        _fabric_delete(f"/workspaces/{target_workspace_id}/items/{_item['id']}")
+        _say(f"Removed excluded target item <code>{_item['displayName']}</code>.", "warn")
 
 # Cell 6 — Optional: remove items in the target workspace that no longer exist in Git.
 if remove_orphans:
